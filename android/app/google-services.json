@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "412678793983",
+    "firebase_url": "https://capsnap-18dbf-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "capsnap-18dbf",
+    "storage_bucket": "capsnap-18dbf.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:412678793983:android:8c57669d70fffdc2cbbaca",
+        "android_client_info": {
+          "package_name": "com.example.esp32_ble_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZojKAUL128fpPpKBUOmJIaM6SPggCgJQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:412678793983:android:1811fe856a4fbf3bcbbaca",
+        "android_client_info": {
+          "package_name": "com.example.esp32_ble_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZojKAUL128fpPpKBUOmJIaM6SPggCgJQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
