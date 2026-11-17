@@ -1,10 +1,10 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 // =====================================================================
@@ -237,23 +237,40 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                   ),
                 ),
                 const SizedBox(height: 18),
+                // 3D sphere with a highlight and a solid shadow base.
                 Container(
-                  width: 52,
-                  height: 52,
+                  width: 58,
+                  height: 58,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: _goalGradient,
+                    gradient: const RadialGradient(
+                      center: Alignment(-.35, -.45),
+                      radius: 1.0,
+                      colors: [Color(0xFF9DF5CF), _green, Color(0xFF0B7F57)],
+                      stops: [0, .5, 1],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: .25),
+                    ),
                     boxShadow: [
+                      const BoxShadow(
+                        color: Color(0xFF064D35),
+                        offset: Offset(0, 4),
+                      ),
                       BoxShadow(
-                        color: _green.withValues(alpha: .45),
-                        blurRadius: 20,
+                        color: _green.withValues(alpha: .5),
+                        blurRadius: 22,
+                        offset: const Offset(0, 8),
                       ),
                     ],
                   ),
                   child: const Icon(
                     Icons.flag_rounded,
                     color: Colors.white,
-                    size: 26,
+                    size: 27,
+                    shadows: [
+                      Shadow(color: Colors.black38, offset: Offset(0, 2)),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -266,37 +283,21 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                 const SizedBox(height: 18),
                 Wrap(
                   spacing: 8,
-                  runSpacing: 8,
+                  runSpacing: 6,
                   alignment: WrapAlignment.center,
                   children: [
                     for (final option in _goalOptions)
-                      GestureDetector(
+                      _GoalKey(
+                        label: _goalLabel(option),
+                        selected: option == goalSeconds,
+                        // 7–9h keys get a faint green rim (healthy range).
+                        healthy:
+                            option >= _healthyMinSeconds &&
+                            option <= _healthyMaxSeconds,
                         onTap: () {
                           Navigator.pop(context);
                           _saveGoal(option);
                         },
-                        child: Container(
-                          width: 76,
-                          height: 44,
-                          alignment: Alignment.center,
-                          decoration: option == goalSeconds
-                              ? BoxDecoration(
-                                  gradient: _goalGradient,
-                                  borderRadius: BorderRadius.circular(14),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: _green.withValues(alpha: .4),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                )
-                              : _glass(radius: 14),
-                          child: Text(
-                            _goalLabel(option),
-                            style: _display(15, weight: FontWeight.w700),
-                          ),
-                        ),
                       ),
                   ],
                 ),
@@ -541,9 +542,11 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
           const SizedBox(height: 16),
           _Entrance(index: 1, child: _wakeCard()),
           const SizedBox(height: 16),
-          _Entrance(index: 2, child: _weekdayWeekendCard()),
+          _Entrance(index: 2, child: _fallAsleepCard()),
           const SizedBox(height: 16),
-          _Entrance(index: 3, child: _comfortCard()),
+          _Entrance(index: 3, child: _weekdayWeekendCard()),
+          const SizedBox(height: 16),
+          _Entrance(index: 4, child: _comfortCard()),
         ];
       case 3:
         return [
@@ -609,13 +612,13 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
         ? "ahead of your goal"
         : "right on your goal";
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: .1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withValues(alpha: .3)),
-      ),
+    // How much of the goal hours were actually slept (for the 3D meter).
+    final needed = goalSeconds * logged;
+    final fill = needed == 0 ? 0.0 : (totalSleep / needed).clamp(0.0, 1.0);
+
+    return _slab(
+      tint: logged == 0 ? _violet : (short ? _rose : _green),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -623,31 +626,102 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
             children: [
               Text("SLEEP DEBT", style: _eyebrow()),
               const Spacer(),
-              Icon(
-                short ? Icons.trending_down_rounded : Icons.verified_rounded,
-                color: color,
-                size: 15,
+              Container(
+                width: 28,
+                height: 28,
+                decoration: _key(color, radius: 9),
+                child: Icon(
+                  short ? Icons.trending_down_rounded : Icons.verified_rounded,
+                  color: color,
+                  size: 15,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: _display(22, weight: FontWeight.w700, color: color),
-            ),
+            child: _text3D(value, 30, Colors.white),
           ),
-          const SizedBox(height: 2),
-          Text(note, style: TextStyle(color: _white(.5), fontSize: 11)),
+          const SizedBox(height: 4),
+          Text(note, style: TextStyle(color: _white(.55), fontSize: 11.5)),
+          if (logged > 0) ...[
+            const SizedBox(height: 12),
+            // 3D meter: slept vs needed this week.
+            Container(
+              height: 14,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: Colors.black.withValues(alpha: .35),
+                border: Border.all(color: Colors.white.withValues(alpha: .08)),
+              ),
+              child: LayoutBuilder(
+                builder: (context, box) => Align(
+                  alignment: Alignment.centerLeft,
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: fill),
+                    duration: const Duration(milliseconds: 900),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, f, _) => Container(
+                      width: math.max(box.maxWidth * f, 10),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(7),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color.lerp(_cyan, Colors.white, .3)!,
+                            _violet,
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _violet.withValues(alpha: .55),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Text(
+                  "Slept ${_hm(totalSleep)}",
+                  style: TextStyle(color: _white(.55), fontSize: 10.5),
+                ),
+                const Spacer(),
+                Text(
+                  "Needed ${_hm(needed)}",
+                  style: TextStyle(color: _white(.55), fontSize: 10.5),
+                ),
+              ],
+            ),
+          ],
           if (short) ...[
-            const SizedBox(height: 8),
-            Text(
-              debt > 10 * 3600
-                  ? "Too big to repay at once. Aim for +${perNight}m a night."
-                  : "Try +${perNight}m a night for 4 nights.",
-              style: TextStyle(color: _white(.75), fontSize: 11, height: 1.3),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.lightbulb_rounded, color: _amber, size: 14),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    debt > 10 * 3600
+                        ? "Too big to repay at once. Aim for +${perNight}m a night."
+                        : "Try +${perNight}m a night for 4 nights.",
+                    style: TextStyle(
+                      color: _white(.8),
+                      fontSize: 11.5,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ],
@@ -710,9 +784,9 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
       return DateFormat('MMM d').format(st);
     }
 
-    return Container(
+    return _slab(
+      tint: _violet,
       padding: const EdgeInsets.all(16),
-      decoration: _glass(radius: 26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -722,8 +796,23 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                 width: 36,
                 height: 36,
                 decoration: BoxDecoration(
-                  color: _violet,
                   borderRadius: BorderRadius.circular(12),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color.lerp(_violet, Colors.white, .25)!, _violet],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Color.lerp(_violet, Colors.black, .55)!,
+                      offset: const Offset(0, 3),
+                    ),
+                    BoxShadow(
+                      color: _violet.withValues(alpha: .45),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
                 ),
                 child: const Icon(
                   Icons.show_chart_rounded,
@@ -746,11 +835,8 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: badgeColor.withValues(alpha: .15),
-                  borderRadius: BorderRadius.circular(10),
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: _key(badgeColor, radius: 12),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -771,7 +857,7 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
           ),
           const SizedBox(height: 16),
           SizedBox(
-            height: 150,
+            height: 168,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -803,16 +889,22 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                             ),
                             duration: Duration(milliseconds: 600 + 120 * k),
                             curve: Curves.easeOutCubic,
-                            builder: (context, v, _) => Container(
-                              height: math.max(6, 90 * v),
-                              decoration: BoxDecoration(
-                                color: k == 3
-                                    ? _violet
-                                    : _violet.withValues(alpha: .35),
-                                borderRadius: BorderRadius.circular(10),
-                                border: k == 3
-                                    ? Border.all(color: _white(.35))
-                                    : null,
+                            builder: (context, v, _) => SizedBox(
+                              height: math.max(10, 100 * v) + 12,
+                              width: double.infinity,
+                              child: CustomPaint(
+                                painter: _Block3DPainter(
+                                  color: totals[k] == 0
+                                      ? _white(.25)
+                                      : k == 3
+                                      ? _violet
+                                      : const Color(0xFF4A3FB0),
+                                  highlight: k == 3
+                                      ? _cyan
+                                      : const Color(0xFF6B5BFF),
+                                  selected: k == 3,
+                                  empty: totals[k] == 0,
+                                ),
                               ),
                             ),
                           ),
@@ -840,8 +932,9 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: _white(.05),
+              color: Colors.black.withValues(alpha: .22),
               borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: .08)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -879,8 +972,8 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
   Widget _tabBar() {
     final logged = dailySleep.where((s) => s > 0).length;
     return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: _glass(radius: 18),
+      padding: const EdgeInsets.fromLTRB(5, 5, 5, 8),
+      decoration: _tray().copyWith(borderRadius: BorderRadius.circular(20)),
       child: Row(
         children: [
           for (int i = 0; i < _tabs.length; i++)
@@ -893,18 +986,38 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                   setState(() => _tab = i);
                 },
                 child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 240),
+                  duration: const Duration(milliseconds: 260),
                   curve: Curves.easeOutCubic,
                   height: 50,
+                  // Selected tab pops up as a glossy 3D key.
+                  transform: Matrix4.translationValues(0, _tab == i ? -2 : 0, 0),
                   decoration: BoxDecoration(
-                    gradient: _tab == i ? _mainGradient : null,
+                    gradient: _tab == i
+                        ? LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [
+                              Color.lerp(_violet, Colors.white, .15)!,
+                              _cyan,
+                            ],
+                          )
+                        : null,
                     borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _tab == i
+                          ? Colors.white.withValues(alpha: .3)
+                          : Colors.transparent,
+                    ),
                     boxShadow: _tab == i
                         ? [
                             BoxShadow(
-                              color: _violet.withValues(alpha: .45),
-                              blurRadius: 14,
-                              offset: const Offset(0, 5),
+                              color: Color.lerp(_violet, Colors.black, .55)!,
+                              offset: const Offset(0, 4),
+                            ),
+                            BoxShadow(
+                              color: _cyan.withValues(alpha: .4),
+                              blurRadius: 16,
+                              offset: const Offset(0, 8),
                             ),
                           ]
                         : null,
@@ -916,6 +1029,14 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                         _tabs[i].icon,
                         size: 17,
                         color: _tab == i ? Colors.white : _white(.5),
+                        shadows: _tab == i
+                            ? const [
+                                Shadow(
+                                  color: Colors.black38,
+                                  offset: Offset(0, 1.5),
+                                ),
+                              ]
+                            : null,
                       ),
                       const SizedBox(height: 3),
                       FittedBox(
@@ -971,9 +1092,11 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     final now = DateTime.now();
     final isThisWeek = !now.isBefore(weekStart) && now.isBefore(_nextWeekStart);
 
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: _glass(radius: 20),
+    return _slab(
+      tint: _violet,
+      radius: 22,
+      depth: 5,
+      padding: const EdgeInsets.fromLTRB(7, 7, 7, 10),
       child: Row(
         children: [
           _roundButton(Icons.chevron_left_rounded, () => _changeWeek(-1)),
@@ -983,7 +1106,11 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                 Text(
                   "${DateFormat('MMM d').format(weekStart)} – "
                   "${DateFormat('MMM d, y').format(weekEnd)}",
-                  style: _display(15),
+                  style: _display(15.5, weight: FontWeight.w700).copyWith(
+                    shadows: const [
+                      Shadow(color: Colors.black54, offset: Offset(0, 2)),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -1011,25 +1138,208 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     double size = 40,
     double radius = 14,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: Ink(
-        decoration: _glass(radius: radius),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(radius),
-          child: SizedBox(
-            width: size,
-            height: size,
-            child: Icon(icon, color: Colors.white, size: 20),
+    return _PressKey(
+      onTap: onTap,
+      size: size,
+      radius: radius,
+      child: Icon(icon, color: Colors.white, size: 20),
+    );
+  }
+
+
+  // ===================================================================
+  // SUMMARY
+  // ===================================================================
+  // ===================================================================
+  // 3D HELPERS
+  // ===================================================================
+  /// A raised "slab": tinted face, glossy top sheen, a solid darker
+  /// edge underneath (thickness) and a soft coloured glow.
+  Widget _slab({
+    required Color tint,
+    required Widget child,
+    double radius = 24,
+    EdgeInsets padding = const EdgeInsets.fromLTRB(16, 14, 16, 16),
+    double depth = 6,
+  }) {
+    return Container(
+      margin: EdgeInsets.only(bottom: depth),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        boxShadow: [
+          // Solid edge = slab thickness.
+          BoxShadow(
+            color: Color.lerp(tint, Colors.black, .72)!,
+            offset: Offset(0, depth),
           ),
+          // Soft glow under the slab.
+          BoxShadow(
+            color: tint.withValues(alpha: .28),
+            blurRadius: 26,
+            offset: Offset(0, depth + 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(radius),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color.lerp(tint, const Color(0xFF151040), .35)!,
+                      Color.lerp(tint, const Color(0xFF0B0726), .72)!,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Glossy sheen on the top half.
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              height: 60,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white.withValues(alpha: .10),
+                      Colors.white.withValues(alpha: 0),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Bright top edge + subtle frame.
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(color: Colors.white.withValues(alpha: .1)),
+                ),
+              ),
+            ),
+            Positioned(
+              left: radius,
+              right: radius,
+              top: 0,
+              height: 1.2,
+              child: ColoredBox(color: Colors.white.withValues(alpha: .35)),
+            ),
+            Padding(padding: padding, child: child),
+          ],
         ),
       ),
     );
   }
 
+  /// Extruded 3D number: stacked darker copies behind the face.
+  /// Big bold number (plain, no shadow).
+  Widget _text3D(String text, double size, Color color) {
+    return Text(
+      text,
+      style: _display(size, weight: FontWeight.w800, color: color),
+    );
+  }
+
+
+  /// Small raised "key" (chip with a solid darker bottom edge).
+  BoxDecoration _key(Color tint, {double radius = 12, bool on = true}) =>
+      BoxDecoration(
+        borderRadius: BorderRadius.circular(radius),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: on
+              ? [
+                  Color.lerp(tint, Colors.white, .12)!.withValues(alpha: .32),
+                  tint.withValues(alpha: .16),
+                ]
+              : [_white(.10), _white(.05)],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: .12)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: .45),
+            offset: const Offset(0, 3),
+          ),
+        ],
+      );
+
+  /// Glossy 3D icon tile: lit top, solid darker edge, coloured glow.
+  BoxDecoration _iconKey(Color c, {Gradient? gradient}) => BoxDecoration(
+    borderRadius: BorderRadius.circular(12),
+    gradient:
+        gradient ??
+        LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color.lerp(c, Colors.white, .28)!, c],
+        ),
+    border: Border.all(color: Colors.white.withValues(alpha: .2)),
+    boxShadow: [
+      BoxShadow(
+        color: Color.lerp(c, Colors.black, .55)!,
+        offset: const Offset(0, 3),
+      ),
+      BoxShadow(
+        color: c.withValues(alpha: .45),
+        blurRadius: 12,
+        offset: const Offset(0, 6),
+      ),
+    ],
+  );
+
+  /// Recessed tray (pressed into the card).
+  BoxDecoration _tray({Color? tint}) => BoxDecoration(
+    borderRadius: BorderRadius.circular(14),
+    gradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Colors.black.withValues(alpha: .34),
+        (tint ?? Colors.black).withValues(alpha: tint == null ? .16 : .1),
+      ],
+    ),
+    border: Border.all(
+      color: (tint ?? Colors.white).withValues(alpha: tint == null ? .07 : .3),
+    ),
+  );
+
+  /// Raised panel inside a card (thicker than a key).
+  BoxDecoration _raisedPanel(Color tint) => BoxDecoration(
+    borderRadius: BorderRadius.circular(16),
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        Color.lerp(tint, Colors.white, .1)!.withValues(alpha: .24),
+        tint.withValues(alpha: .07),
+      ],
+    ),
+    border: Border.all(color: tint.withValues(alpha: .35)),
+    boxShadow: [
+      BoxShadow(
+        color: Color.lerp(tint, Colors.black, .78)!,
+        offset: const Offset(0, 4),
+      ),
+      BoxShadow(
+        color: tint.withValues(alpha: .18),
+        blurRadius: 14,
+        offset: const Offset(0, 8),
+      ),
+    ],
+  );
+
   // ===================================================================
-  // SUMMARY
+  // SUMMARY (3D)
   // ===================================================================
   Widget _summaryCard() {
     final loggedDays = dailySleep.where((s) => s > 0).length;
@@ -1039,32 +1349,11 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
       if (dailySleep[i] > dailySleep[best]) best = i;
     }
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            _violet.withValues(alpha: .40),
-            const Color(0xFF2A1F7A).withValues(alpha: .35),
-            _cyan.withValues(alpha: .10),
-          ],
-        ),
-        border: Border.all(color: _white(.12)),
-        boxShadow: [
-          BoxShadow(
-            color: _violet.withValues(alpha: .22),
-            blurRadius: 26,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
+    return _slab(
+      tint: _violet,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Total + vs last week on one line
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -1073,16 +1362,18 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text("TOTAL SLEEP", style: _eyebrow()),
-                    const SizedBox(height: 4),
-                    ShaderMask(
-                      blendMode: BlendMode.srcIn,
-                      shaderCallback: (r) => _mainGradient.createShader(r),
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          totalSleep == 0 ? "—" : formatDuration(totalSleep),
-                          style: _display(32, weight: FontWeight.w700),
+                    const SizedBox(height: 6),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: totalSleep.toDouble()),
+                        duration: const Duration(milliseconds: 900),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, v, _) => _text3D(
+                          totalSleep == 0 ? "—" : formatDuration(v.round()),
+                          34,
+                          Colors.white,
                         ),
                       ),
                     ),
@@ -1091,28 +1382,35 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
               ),
               const SizedBox(width: 10),
               Padding(
-                padding: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.only(bottom: 6),
                 child: _comparisonBadge(),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           _goalRow(),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: [
-              _miniStat(Icons.event_available_rounded, "$loggedDays/7", "days"),
-              const SizedBox(width: 6),
+              _miniStat(
+                Icons.event_available_rounded,
+                "$loggedDays/7",
+                "days",
+                _cyan,
+              ),
+              const SizedBox(width: 8),
               _miniStat(
                 Icons.av_timer_rounded,
                 loggedDays == 0 ? "-" : _shortDur(avg),
                 "avg",
+                _violet,
               ),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               _miniStat(
                 Icons.emoji_events_rounded,
                 loggedDays == 0 ? "-" : days[best],
                 "best",
+                _amber,
               ),
             ],
           ),
@@ -1130,18 +1428,18 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     return "${seconds}s";
   }
 
-  /// One thin goal bar: flag · 7 day segments · met count · edit.
+  /// Goal bar: flag · 7 raised 3D segments · met count · edit.
   Widget _goalRow() {
     final met = _goalDaysMet;
     return GestureDetector(
       onTap: _editGoal,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+        padding: const EdgeInsets.fromLTRB(10, 9, 8, 11),
         decoration: BoxDecoration(
-          color: _white(.06),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _white(.08)),
+          color: Colors.black.withValues(alpha: .22),
+          border: Border.all(color: Colors.white.withValues(alpha: .08)),
         ),
         child: Row(
           children: [
@@ -1157,26 +1455,51 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
             ),
             const SizedBox(width: 10),
             for (int i = 0; i < 7; i++) ...[
-              if (i > 0) const SizedBox(width: 3),
+              if (i > 0) const SizedBox(width: 4),
               Expanded(
-                child: Container(
-                  height: 5,
-                  decoration: BoxDecoration(
-                    gradient: _metGoal(dailySleep[i]) ? _goalGradient : null,
-                    color: _metGoal(dailySleep[i])
-                        ? null
-                        : dailySleep[i] > 0
-                        ? _white(.22)
-                        : _white(.08),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
+                child: Builder(
+                  builder: (context) {
+                    final hit = _metGoal(dailySleep[i]);
+                    final logged = dailySleep[i] > 0;
+                    final c = hit ? _green : (logged ? _violet : null);
+                    return Container(
+                      height: 7,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(4),
+                        gradient: c == null
+                            ? null
+                            : LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Color.lerp(c, Colors.white, .35)!,
+                                  c,
+                                ],
+                              ),
+                        color: c == null ? _white(.1) : null,
+                        boxShadow: [
+                          BoxShadow(
+                            color: c == null
+                                ? Colors.black.withValues(alpha: .4)
+                                : Color.lerp(c, Colors.black, .55)!,
+                            offset: const Offset(0, 2),
+                          ),
+                          if (hit)
+                            BoxShadow(
+                              color: _green.withValues(alpha: .45),
+                              blurRadius: 6,
+                            ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
             const SizedBox(width: 10),
             Text(
               "$met/7",
-              style: _display(13, weight: FontWeight.w700, color: _green),
+              style: _display(13, weight: FontWeight.w800, color: _green),
             ),
             const SizedBox(width: 4),
             Icon(Icons.edit_rounded, color: _white(.45), size: 13),
@@ -1218,12 +1541,8 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     return Tooltip(
       message: "Compared with last week",
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: .14),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: .35)),
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: _key(color, radius: 20),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1243,26 +1562,23 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     );
   }
 
-  /// Small inline stat chip: icon · value · label.
-  Widget _miniStat(IconData icon, String value, String label) {
+  /// Small raised stat key: icon · value · label.
+  Widget _miniStat(IconData icon, String value, String label, Color tint) {
     return Expanded(
       child: Container(
-        height: 34,
+        height: 38,
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: _white(.07),
-          borderRadius: BorderRadius.circular(12),
-        ),
+        decoration: _key(tint),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, color: _cyan, size: 14),
+              Icon(icon, color: tint, size: 15),
               const SizedBox(width: 5),
-              Text(value, style: _display(13.5, weight: FontWeight.w700)),
+              Text(value, style: _display(14, weight: FontWeight.w800)),
               const SizedBox(width: 4),
-              Text(label, style: TextStyle(color: _white(.5), fontSize: 11)),
+              Text(label, style: TextStyle(color: _white(.55), fontSize: 11)),
             ],
           ),
         ),
@@ -1521,13 +1837,10 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     return Row(
       children: [
         Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: Colors.white, size: 18),
+          width: 38,
+          height: 38,
+          decoration: _iconKey(color),
+          child: Icon(icon, color: Colors.white, size: 19),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -1545,11 +1858,8 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
         ),
         if (badge != null)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-            decoration: BoxDecoration(
-              color: (badgeColor ?? _white(.5)).withValues(alpha: .15),
-              borderRadius: BorderRadius.circular(10),
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: _key(badgeColor ?? _white(.5), radius: 12),
             child: Text(
               badge,
               style: TextStyle(
@@ -1567,10 +1877,7 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _white(.05),
-        borderRadius: BorderRadius.circular(14),
-      ),
+      decoration: _tray(),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1659,6 +1966,208 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
             labels: const ["6 PM", "12 AM", "6 AM", "12 PM", "6 PM"],
             highlightLabel: "6 AM",
             color: _amber,
+          ),
+          const SizedBox(height: 14),
+          _tipBox(message),
+        ],
+      ),
+    );
+  }
+
+  // ===================================================================
+  // TIME TO FALL ASLEEP
+  // ===================================================================
+  /// Seconds from starting a session to the pillow detecting sleep.
+  int? _latency(Map<String, dynamic> d) {
+    final start = d["start_time"];
+    final asleep = d["sleep_start_time"];
+    if (start is! Timestamp || asleep is! Timestamp) return null;
+    final secs = asleep.toDate().difference(start.toDate()).inSeconds;
+    if (secs < 0 || secs > 4 * 3600) return null;
+    return secs;
+  }
+
+  String _latText(int secs) => secs < 60 ? "${secs}s" : "${(secs / 60).round()}m";
+
+  ({String label, Color color}) _latRating(int secs) {
+    final m = secs / 60;
+    if (m <= 20) return (label: "Healthy", color: _green);
+    if (m <= 30) return (label: "A bit slow", color: _amber);
+    return (label: "Slow", color: _rose);
+  }
+
+  Widget _fallAsleepCard() {
+    // Average per weekday (Sun..Sat) and overall.
+    final perDay = List<List<int>>.generate(7, (_) => []);
+    final all = <int>[];
+    for (final d in weekSessions) {
+      final secs = _latency(d);
+      final start = d["start_time"];
+      if (secs == null || start is! Timestamp) continue;
+      final t = start.toDate();
+      final day = DateTime(t.year, t.month, t.day);
+      final i = day.difference(weekStart).inDays;
+      if (i < 0 || i > 6) continue;
+      perDay[i].add(secs);
+      all.add(secs);
+    }
+    final dayAvg = [
+      for (final l in perDay)
+        l.isEmpty ? null : l.reduce((a, b) => a + b) ~/ l.length,
+    ];
+    final avg = all.isEmpty ? null : all.reduce((a, b) => a + b) ~/ all.length;
+    final rating = avg == null ? null : _latRating(avg);
+    final top = math.max(
+      30 * 60,
+      dayAvg.whereType<int>().fold<int>(0, (a, b) => math.max(a, b)),
+    );
+
+    final String message;
+    if (avg == null) {
+      message =
+          "Start a session and fall asleep with the pillow on — once it "
+          "detects sleep, you'll see how long it took here.";
+    } else if (avg / 60 <= 20) {
+      message =
+          "Falling asleep within about 20 minutes is a healthy sign. "
+          "Your current routine and pillow settings are working.";
+    } else {
+      message =
+          "It's taking a while to drift off. Try starting the session a "
+          "little later, lowering the heat, or adding a calm sleep sound.";
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _glass(radius: 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _habitHeader(
+            Icons.hourglass_bottom_rounded,
+            _cyan,
+            "Time to fall asleep",
+            "From starting a session to the pillow sensing sleep",
+            badge: rating?.label,
+            badgeColor: rating?.color,
+          ),
+          if (avg != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              "On average it takes you",
+              style: TextStyle(color: _white(.6), fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  _latText(avg),
+                  style: _display(32, weight: FontWeight.w700),
+                ),
+                const SizedBox(width: 10),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    "to fall asleep · ${all.length} "
+                    "${all.length == 1 ? 'session' : 'sessions'}",
+                    style: TextStyle(color: _white(.55), fontSize: 12.5),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          // Per-day columns: recessed wells with a glossy fill.
+          SizedBox(
+            height: 96,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                for (int i = 0; i < 7; i++)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Column(
+                        children: [
+                          Text(
+                            dayAvg[i] == null ? "" : _latText(dayAvg[i]!),
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: _white(.75),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Expanded(
+                            child: Container(
+                              width: double.infinity,
+                              decoration: _tray(),
+                              alignment: Alignment.bottomCenter,
+                              child: dayAvg[i] == null
+                                  ? null
+                                  : TweenAnimationBuilder<double>(
+                                      tween: Tween(
+                                        begin: 0,
+                                        end: math.max(
+                                          dayAvg[i]! / top,
+                                          .06,
+                                        ),
+                                      ),
+                                      duration: const Duration(
+                                        milliseconds: 800,
+                                      ),
+                                      curve: Curves.easeOutCubic,
+                                      builder: (context, v, _) =>
+                                          FractionallySizedBox(
+                                            heightFactor: v,
+                                            widthFactor: 1,
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(9),
+                                                gradient: LinearGradient(
+                                                  begin: Alignment.topCenter,
+                                                  end: Alignment.bottomCenter,
+                                                  colors: [
+                                                    Color.lerp(
+                                                      _latRating(
+                                                        dayAvg[i]!,
+                                                      ).color,
+                                                      Colors.white,
+                                                      .3,
+                                                    )!,
+                                                    _latRating(
+                                                      dayAvg[i]!,
+                                                    ).color,
+                                                  ],
+                                                ),
+                                                border: Border.all(
+                                                  color: Colors.white
+                                                      .withValues(alpha: .3),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            days[i][0],
+                            style: TextStyle(
+                              color: _white(.5),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           const SizedBox(height: 14),
           _tipBox(message),
@@ -1786,18 +2295,22 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
             const SizedBox(width: 6),
             Text(label, style: TextStyle(color: _white(.5), fontSize: 11.5)),
             const Spacer(),
-            Text(value, style: _display(13.5, weight: FontWeight.w700)),
+            Text(
+              value,
+              style: _display(13.5, weight: FontWeight.w800).copyWith(
+                shadows: const [
+                  Shadow(color: Colors.black54, offset: Offset(0, 1.5)),
+                ],
+              ),
+            ),
           ],
         ),
       );
 
       return Container(
+        margin: const EdgeInsets.only(bottom: 4),
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: .09),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: color.withValues(alpha: .25)),
-        ),
+        decoration: _raisedPanel(color),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1839,9 +2352,9 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
       );
     }
 
-    return Container(
+    return _slab(
+      tint: _violet,
       padding: const EdgeInsets.all(16),
-      decoration: _glass(radius: 26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1870,15 +2383,22 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                   style: TextStyle(color: _white(.6), fontSize: 12.5),
                 ),
                 const Spacer(),
-                Text(
-                  shift.abs() < 5
-                      ? "None"
-                      : "${shift > 0 ? '+' : '−'}${_spreadText(shift.abs())} "
-                            "${shift > 0 ? 'later' : 'earlier'}",
-                  style: _display(
-                    15,
-                    weight: FontWeight.w700,
-                    color: badgeColor,
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: _key(badgeColor, radius: 10),
+                  child: Text(
+                    shift.abs() < 5
+                        ? "None"
+                        : "${shift > 0 ? '+' : '−'}${_spreadText(shift.abs())} "
+                              "${shift > 0 ? 'later' : 'earlier'}",
+                    style: _display(
+                      14,
+                      weight: FontWeight.w800,
+                      color: badgeColor,
+                    ),
                   ),
                 ),
               ],
@@ -1977,28 +2497,18 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                 "around $vib%. Log more sessions to find your best settings.";
     }
 
-    return Container(
+    return _slab(
+      tint: _amber,
       padding: const EdgeInsets.all(16),
-      decoration: _glass(radius: 26),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  gradient: _comfortGradient,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: _amber.withValues(alpha: .4),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
+                width: 38,
+                height: 38,
+                decoration: _iconKey(_amber, gradient: _comfortGradient),
                 child: const Icon(
                   Icons.tune_rounded,
                   color: Colors.white,
@@ -2057,23 +2567,7 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              gradient: insight == null
-                  ? null
-                  : LinearGradient(
-                      colors: [
-                        _amber.withValues(alpha: .14),
-                        _magenta.withValues(alpha: .08),
-                      ],
-                    ),
-              color: insight == null ? _white(.05) : null,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: insight == null
-                    ? Colors.transparent
-                    : _amber.withValues(alpha: .25),
-              ),
-            ),
+            decoration: _tray(tint: insight == null ? null : _amber),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -2115,20 +2609,32 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
   }) {
     return Expanded(
       child: Container(
+        margin: const EdgeInsets.only(bottom: 4),
         padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: _white(.05),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _white(.06)),
-        ),
+        decoration: _raisedPanel(gradient.colors.last),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, color: gradient.colors.last, size: 16),
+            Container(
+              width: 26,
+              height: 26,
+              decoration: _iconKey(
+                gradient.colors.last,
+                gradient: gradient,
+              ).copyWith(borderRadius: BorderRadius.circular(8)),
+              child: Icon(icon, color: Colors.white, size: 14),
+            ),
             const SizedBox(height: 6),
             FittedBox(
               fit: BoxFit.scaleDown,
-              child: Text(value, style: _display(16, weight: FontWeight.w700)),
+              child: Text(
+                value,
+                style: _display(17, weight: FontWeight.w800).copyWith(
+                  shadows: const [
+                    Shadow(color: Colors.black54, offset: Offset(0, 2)),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 2),
             Text(
@@ -2138,24 +2644,37 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
               style: TextStyle(color: _white(.5), fontSize: 10),
             ),
             const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: SizedBox(
-                height: 4,
-                child: Stack(
-                  children: [
-                    Positioned.fill(child: ColoredBox(color: _white(.08))),
-                    if (level != null)
-                      FractionallySizedBox(
+            // Recessed 3D meter
+            Container(
+              height: 7,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                color: Colors.black.withValues(alpha: .4),
+                border: Border.all(color: Colors.white.withValues(alpha: .06)),
+              ),
+              child: level == null
+                  ? null
+                  : Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
                         widthFactor: level.clamp(0.0, 1.0),
                         heightFactor: 1,
                         child: DecoratedBox(
-                          decoration: BoxDecoration(gradient: gradient),
+                          decoration: BoxDecoration(
+                            gradient: gradient,
+                            borderRadius: BorderRadius.circular(4),
+                            boxShadow: [
+                              BoxShadow(
+                                color: gradient.colors.last.withValues(
+                                  alpha: .55,
+                                ),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                  ],
-                ),
-              ),
+                    ),
             ),
           ],
         ),
@@ -2232,166 +2751,56 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
             height: 210,
             child: Stack(
               children: [
-                BarChart(
-                  BarChartData(
-                    alignment: BarChartAlignment.spaceAround,
-                    maxY: maxY,
-                    minY: 0,
-                    barTouchData: BarTouchData(
-                      enabled: true,
-                      // Tap a bar to open that day in History.
-                      touchCallback: (event, response) {
-                        if (event is! FlTapUpEvent) return;
-                        final index = response?.spot?.touchedBarGroupIndex;
-                        if (index == null) return;
-                        _openDay(_dayAt(index));
-                      },
-                      touchTooltipData: BarTouchTooltipData(
-                        getTooltipColor: (_) => _surface,
-                        tooltipRoundedRadius: 10,
-                        tooltipPadding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                          final i = group.x;
-                          return BarTooltipItem(
-                            "${days[i]}\n",
-                            TextStyle(color: _white(.6), fontSize: 11),
-                            children: [
-                              TextSpan(
-                                text: formatDuration(dailySleep[i]),
-                                style: _display(14, weight: FontWeight.w700),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ),
-                    titlesData: FlTitlesData(
-                      leftTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 34,
-                          interval: interval,
-                          getTitlesWidget: (value, meta) {
-                            if (value == meta.max || value == 0) {
-                              return const SizedBox.shrink();
-                            }
-                            final label = value % 1 == 0
-                                ? value.toInt().toString()
-                                : value.toStringAsFixed(1);
-                            return Text(
-                              "$label$unit",
-                              style: TextStyle(color: _white(.4), fontSize: 10),
-                            );
-                          },
-                        ),
-                      ),
-                      rightTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-                      topTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-                      bottomTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 28,
-                          getTitlesWidget: (value, meta) {
-                            final i = value.toInt();
-                            final isSel = _dayAt(i) == selected;
-                            return Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                days[i][0],
-                                style: TextStyle(
-                                  color: isSel ? Colors.white : _white(.45),
-                                  fontSize: 12,
-                                  fontWeight: isSel
-                                      ? FontWeight.w700
-                                      : FontWeight.w500,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    borderData: FlBorderData(show: false),
-                    gridData: FlGridData(
-                      show: true,
-                      drawVerticalLine: false,
-                      horizontalInterval: interval,
-                      getDrawingHorizontalLine: (_) => FlLine(
-                        color: _white(.06),
-                        strokeWidth: 1,
-                        dashArray: [4, 4],
-                      ),
-                    ),
-                    rangeAnnotations: RangeAnnotations(
-                      horizontalRangeAnnotations: [
-                        if (showHealthyBand)
-                          HorizontalRangeAnnotation(
-                            y1: _healthyMinSeconds / divisor,
-                            y2: _healthyMaxSeconds / divisor,
-                            color: _green.withValues(alpha: .10),
-                          ),
-                      ],
-                    ),
-                    extraLinesData: ExtraLinesData(
-                      horizontalLines: [
-                        HorizontalLine(
-                          y: goalSeconds / divisor,
-                          color: _green.withValues(alpha: .85),
-                          strokeWidth: 1.5,
-                          dashArray: [3, 3],
-                        ),
-                        if (avgY > 0)
-                          HorizontalLine(
-                            y: avgY,
-                            color: _white(.55),
-                            strokeWidth: 1.5,
-                            dashArray: [6, 4],
-                          ),
-                      ],
-                    ),
-                    barGroups: List.generate(7, (i) {
-                      final isSel = _dayAt(i) == selected;
-                      final value = dailySleep[i] / divisor;
-                      return BarChartGroupData(
-                        x: i,
-                        barRods: [
-                          BarChartRodData(
-                            toY: value,
-                            width: 22,
-                            borderRadius: BorderRadius.circular(7),
-                            gradient: LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: _metGoal(dailySleep[i])
-                                  ? [
-                                      const Color(
-                                        0xFF10B981,
-                                      ).withValues(alpha: isSel ? 1 : .75),
-                                      _green.withValues(alpha: isSel ? 1 : .75),
-                                    ]
-                                  : isSel
-                                  ? const [_violet, _cyan]
-                                  : [
-                                      _violet.withValues(alpha: .65),
-                                      _cyan.withValues(alpha: .65),
-                                    ],
-                            ),
-                            backDrawRodData: BackgroundBarChartRodData(
-                              show: true,
-                              toY: maxY,
-                              color: _white(isSel ? .07 : .035),
-                            ),
-                          ),
+                // 3D bars: grow in on load, tap one to open that day.
+                TweenAnimationBuilder<double>(
+                  key: ValueKey(weekStart),
+                  tween: Tween(begin: 0, end: 1),
+                  duration: const Duration(milliseconds: 1000),
+                  builder: (context, grow, _) => LayoutBuilder(
+                    builder: (context, box) {
+                      final selIndex = [
+                        for (int i = 0; i < 7; i++)
+                          if (_dayAt(i) == selected) i,
+                      ];
+                      final painter = _Week3DChartPainter(
+                        values: [for (final v in dailySleep) v / divisor],
+                        labels: [
+                          for (final v in dailySleep)
+                            v <= 0 ? "" : _hm(v),
                         ],
+                        days: days,
+                        metGoal: [for (final v in dailySleep) _metGoal(v)],
+                        maxY: maxY,
+                        interval: interval,
+                        unit: unit,
+                        goalY: goalSeconds / divisor,
+                        avgY: avgY,
+                        bandLow: showHealthyBand
+                            ? _healthyMinSeconds / divisor
+                            : null,
+                        bandHigh: showHealthyBand
+                            ? _healthyMaxSeconds / divisor
+                            : null,
+                        selected: selIndex.isEmpty ? null : selIndex.first,
+                        grow: grow,
                       );
-                    }),
+                      return GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapUp: (d) {
+                          final i = painter.indexAt(
+                            d.localPosition,
+                            Size(box.maxWidth, box.maxHeight),
+                          );
+                          if (i == null) return;
+                          HapticFeedback.selectionClick();
+                          _openDay(_dayAt(i));
+                        },
+                        child: CustomPaint(
+                          size: Size(box.maxWidth, box.maxHeight),
+                          painter: painter,
+                        ),
+                      );
+                    },
                   ),
                 ),
                 if (totalSleep == 0)
@@ -2457,31 +2866,40 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
       behavior: HitTestBehavior.opaque,
       onTap: isFuture ? null : () => _openDay(day),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.fromLTRB(12, 12, 16, 12),
-        decoration: isSel
-            ? BoxDecoration(
+        // Logged days are raised 3D tiles; empty days sit recessed.
+        margin: EdgeInsets.only(bottom: secs > 0 ? 12 : 8),
+        padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
+        decoration: secs > 0
+            ? _raisedPanel(
+                isSel ? _cyan : (_metGoal(secs) ? _green : _violet),
+              ).copyWith(
                 borderRadius: BorderRadius.circular(18),
-                gradient: LinearGradient(
-                  colors: [
-                    _violet.withValues(alpha: .30),
-                    _cyan.withValues(alpha: .08),
-                  ],
-                ),
-                border: Border.all(color: _cyan.withValues(alpha: .35)),
+                border: isSel
+                    ? Border.all(color: Colors.white.withValues(alpha: .6))
+                    : null,
               )
-            : _glass(radius: 18),
+            : _tray().copyWith(
+                borderRadius: BorderRadius.circular(18),
+                border: isSel
+                    ? Border.all(color: _cyan.withValues(alpha: .5))
+                    : null,
+              ),
         child: Row(
           children: [
             // Date badge
             Container(
               width: 44,
               height: 44,
-              decoration: BoxDecoration(
-                gradient: secs > 0 ? _mainGradient : null,
-                color: secs > 0 ? null : _white(.05),
-                borderRadius: BorderRadius.circular(13),
-              ),
+              decoration: secs > 0
+                  ? _iconKey(
+                      _metGoal(secs) ? _green : _violet,
+                      gradient: _metGoal(secs) ? _goalGradient : _mainGradient,
+                    ).copyWith(borderRadius: BorderRadius.circular(13))
+                  : BoxDecoration(
+                      color: _white(.05),
+                      borderRadius: BorderRadius.circular(13),
+                      border: Border.all(color: _white(.06)),
+                    ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -2531,10 +2949,7 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                             horizontal: 7,
                             vertical: 2,
                           ),
-                          decoration: BoxDecoration(
-                            color: _green.withValues(alpha: .18),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                          decoration: _key(_green, radius: 8),
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -2563,10 +2978,7 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                             horizontal: 7,
                             vertical: 2,
                           ),
-                          decoration: BoxDecoration(
-                            color: _cyan.withValues(alpha: .18),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                          decoration: _key(_cyan, radius: 8),
                           child: const Text(
                             "Today",
                             style: TextStyle(
@@ -2581,30 +2993,51 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                   ),
                   const SizedBox(height: 8),
                   // Relative bar vs. the best day this week
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: SizedBox(
-                      height: 5,
-                      child: Stack(
-                        children: [
-                          Positioned.fill(
-                            child: ColoredBox(color: _white(.07)),
-                          ),
-                          TweenAnimationBuilder<double>(
-                            tween: Tween(begin: 0, end: fraction),
-                            duration: const Duration(milliseconds: 900),
-                            curve: Curves.easeOutCubic,
-                            builder: (context, v, _) => FractionallySizedBox(
-                              widthFactor: v,
-                              heightFactor: 1,
-                              child: const DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: _mainGradient,
-                                ),
+                  // Recessed 3D meter with a glowing fill.
+                  Container(
+                    height: 8,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color: Colors.black.withValues(alpha: .4),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: .06),
+                      ),
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: TweenAnimationBuilder<double>(
+                        tween: Tween(begin: 0, end: fraction),
+                        duration: const Duration(milliseconds: 900),
+                        curve: Curves.easeOutCubic,
+                        builder: (context, v, _) => FractionallySizedBox(
+                          widthFactor: v,
+                          heightFactor: 1,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(4),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: _metGoal(secs)
+                                    ? [
+                                        Color.lerp(_green, Colors.white, .35)!,
+                                        _green,
+                                      ]
+                                    : [
+                                        Color.lerp(_cyan, Colors.white, .25)!,
+                                        _violet,
+                                      ],
                               ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: (_metGoal(secs) ? _green : _cyan)
+                                      .withValues(alpha: .5),
+                                  blurRadius: 6,
+                                ),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
@@ -2621,9 +3054,18 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
                     isFuture ? "—" : formatDuration(secs),
                     textAlign: TextAlign.right,
                     style: _display(
-                      15,
-                      weight: FontWeight.w700,
+                      15.5,
+                      weight: FontWeight.w800,
                       color: secs > 0 ? Colors.white : _white(.35),
+                    ).copyWith(
+                      shadows: secs > 0
+                          ? const [
+                              Shadow(
+                                color: Colors.black54,
+                                offset: Offset(0, 2),
+                              ),
+                            ]
+                          : null,
                     ),
                   ),
                   if (_statusFor(secs) case final status?) ...[
@@ -2648,8 +3090,17 @@ class _WeeklySleepScreenState extends State<WeeklySleepScreen>
               ),
             ),
             if (!isFuture) ...[
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right_rounded, color: _white(.35), size: 18),
+              const SizedBox(width: 6),
+              Container(
+                width: 24,
+                height: 24,
+                decoration: _key(secs > 0 ? _violet : _white(.5), radius: 8),
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  color: _white(secs > 0 ? .8 : .4),
+                  size: 16,
+                ),
+              ),
             ],
           ],
         ),
@@ -2791,146 +3242,936 @@ class _BedtimeTrack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, box) {
-        final w = box.maxWidth;
-        const dot = 22.0;
+    final accent = color ?? _magenta;
+    final points = <({double pos, String letter})>[
+      for (int i = 0; i < 7; i++)
+        if (bedtimes[i] != null)
+          (
+            pos: _pos(bedtimes[i]!.hour * 60 + bedtimes[i]!.minute),
+            letter: days[i][0],
+          ),
+    ];
 
-        return Column(
-          children: [
-            SizedBox(
-              height: 46,
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Track
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: 20,
-                    height: 6,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(3),
-                        gradient: LinearGradient(
-                          colors: [
-                            _amber.withValues(alpha: .25),
-                            _violet.withValues(alpha: .35),
-                            _magenta.withValues(alpha: .35),
-                            _amber.withValues(alpha: .25),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  // ± spread band around the average
-                  if (meanMinutes != null && spreadMinutes != null)
-                    Builder(
-                      builder: (context) {
-                        final c = _pos(meanMinutes!);
-                        final half = spreadMinutes! / 1440;
-                        final l = (c - half).clamp(0.0, 1.0);
-                        final r = (c + half).clamp(0.0, 1.0);
-                        return Positioned(
-                          left: w * l,
-                          width: math.max(w * (r - l), 4),
-                          top: 10,
-                          height: 26,
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: (color ?? _magenta).withValues(alpha: .16),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: (color ?? _magenta).withValues(
-                                  alpha: .35,
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  // Average line
-                  if (meanMinutes != null)
-                    Positioned(
-                      left: w * _pos(meanMinutes!) - 1,
-                      top: 4,
-                      height: 38,
-                      child: Container(
-                        width: 2,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(1),
-                          boxShadow: const [
-                            BoxShadow(color: Colors.white, blurRadius: 6),
-                          ],
-                        ),
-                      ),
-                    ),
-                  // One dot per day
-                  for (int i = 0; i < 7; i++)
-                    if (bedtimes[i] != null)
-                      Positioned(
-                        left:
-                            (w *
-                                        _pos(
-                                          bedtimes[i]!.hour * 60 +
-                                              bedtimes[i]!.minute,
-                                        ) -
-                                    dot / 2)
-                                .clamp(-dot / 2, w - dot / 2),
-                        top: 12,
-                        child: Container(
-                          width: dot,
-                          height: dot,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: color == null ? _bedtimeGradient : null,
-                            color: color,
-                            border: Border.all(color: _bg, width: 2),
-                            boxShadow: [
-                              BoxShadow(
-                                color: (color ?? _magenta).withValues(
-                                  alpha: .5,
-                                ),
-                                blurRadius: 8,
-                              ),
-                            ],
-                          ),
-                          child: Text(
-                            days[i][0],
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      ),
-                ],
+    return Column(
+      children: [
+        // Spheres drop onto the rail with a bounce whenever data changes.
+        TweenAnimationBuilder<double>(
+          key: ValueKey(Object.hashAll([...bedtimes, meanMinutes])),
+          tween: Tween(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 1100),
+          builder: (context, t, _) => SizedBox(
+            height: 70,
+            width: double.infinity,
+            child: CustomPaint(
+              painter: _Track3DPainter(
+                points: points,
+                mean: meanMinutes == null ? null : _pos(meanMinutes!),
+                halfSpread: spreadMinutes == null
+                    ? null
+                    : spreadMinutes! / 1440,
+                accent: accent,
+                useBedtimeLook: color == null,
+                t: t,
               ),
             ),
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                for (final label in labels)
-                  Text(
-                    label,
-                    style: TextStyle(
-                      color: label == highlightLabel ? _white(.7) : _white(.4),
-                      fontSize: 10,
-                      fontWeight: label == highlightLabel
-                          ? FontWeight.w700
-                          : FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            for (final label in labels)
+              Text(
+                label,
+                style: TextStyle(
+                  color: label == highlightLabel ? _white(.7) : _white(.4),
+                  fontSize: 10,
+                  fontWeight: label == highlightLabel
+                      ? FontWeight.w700
+                      : FontWeight.w500,
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+
+// =====================================================================
+// 3D WEEKLY SLEEP TREND
+// Isometric bars (front, side, top faces) on a floor with a back-wall
+// grid, the 7–9h healthy band, dashed goal/average lines, value labels
+// and a staggered grow-in animation.
+// =====================================================================
+class _Week3DChartPainter extends CustomPainter {
+  final List<double> values;
+  final List<String> labels;
+  final List<String> days;
+  final List<bool> metGoal;
+  final double maxY;
+  final double interval;
+  final String unit;
+  final double goalY;
+  final double avgY;
+  final double? bandLow;
+  final double? bandHigh;
+  final int? selected;
+  final double grow;
+
+  _Week3DChartPainter({
+    required this.values,
+    required this.labels,
+    required this.days,
+    required this.metGoal,
+    required this.maxY,
+    required this.interval,
+    required this.unit,
+    required this.goalY,
+    required this.avgY,
+    required this.bandLow,
+    required this.bandHigh,
+    required this.selected,
+    required this.grow,
+  });
+
+  static const double _left = 34;
+  static const double _bottomPad = 26;
+
+  ({double left, double right, double top, double bottom, double slot,
+    double barW, double dx, double dy}) _geo(Size size) {
+    const n = 7;
+    const right0 = 4.0;
+    final slotGuess = (size.width - _left - right0) / n;
+    final barW0 = slotGuess * .5;
+    final dx = barW0 * .55;
+    final dy = barW0 * .42;
+    final right = size.width - right0 - dx;
+    final slot = (right - _left) / n;
+    return (
+      left: _left,
+      right: right,
+      top: 18 + dy, // room for value labels above the tallest bar
+      bottom: size.height - _bottomPad,
+      slot: slot,
+      barW: slot * .5,
+      dx: dx,
+      dy: dy,
+    );
+  }
+
+  int? indexAt(Offset p, Size size) {
+    final g = _geo(size);
+    if (p.dx < g.left - 4 || p.dx > g.right + g.dx) return null;
+    final i = ((p.dx - g.left) / g.slot).floor();
+    return i < 0 || i > 6 ? null : i;
+  }
+
+  double _y(double v, double top, double bottom) =>
+      bottom - (v / (maxY <= 0 ? 1 : maxY)).clamp(0.0, 1.0) * (bottom - top);
+
+  void _dashed(Canvas c, Offset a, Offset b, Paint p, double dash, double gap) {
+    final len = (b - a).distance;
+    if (len == 0) return;
+    final dir = (b - a) / len;
+    for (double d = 0; d < len; d += dash + gap) {
+      c.drawLine(a + dir * d, a + dir * math.min(d + dash, len), p);
+    }
+  }
+
+  void _text(Canvas c, String text, Offset at, Color color,
+      {double size = 10, bool alignRight = false, bool center = false,
+      FontWeight weight = FontWeight.w500}) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(color: color, fontSize: size, fontWeight: weight),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    var o = at;
+    if (alignRight) o = o.translate(-tp.width, 0);
+    if (center) o = o.translate(-tp.width / 2, 0);
+    tp.paint(c, o.translate(0, -tp.height / 2));
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final g = _geo(size);
+    const white = Colors.white;
+    const green = Color(0xFF34D399);
+
+    // ---------- Floor ----------
+    final floor = Path()
+      ..moveTo(g.left, g.bottom)
+      ..lineTo(g.right, g.bottom)
+      ..lineTo(g.right + g.dx, g.bottom - g.dy)
+      ..lineTo(g.left + g.dx, g.bottom - g.dy)
+      ..close();
+    canvas.drawPath(floor, Paint()..color = white.withValues(alpha: .05));
+    canvas.drawLine(
+      Offset(g.left, g.bottom),
+      Offset(g.right, g.bottom),
+      Paint()
+        ..color = white.withValues(alpha: .18)
+        ..strokeWidth = 1,
+    );
+
+    // ---------- Healthy 7–9h band on the back wall ----------
+    if (bandLow != null && bandHigh != null) {
+      final y1 = _y(bandHigh!, g.top, g.bottom) - g.dy;
+      final y2 = _y(bandLow!, g.top, g.bottom) - g.dy;
+      canvas.drawRect(
+        Rect.fromLTRB(g.left + g.dx, y1, g.right + g.dx, y2),
+        Paint()..color = green.withValues(alpha: .09),
+      );
+    }
+
+    // ---------- Back-wall grid + y labels ----------
+    final grid = Paint()
+      ..color = white.withValues(alpha: .07)
+      ..strokeWidth = 1;
+    if (interval > 0) {
+      for (double v = interval; v <= maxY + 1e-6; v += interval) {
+        final y = _y(v, g.top, g.bottom);
+        _dashed(canvas, Offset(g.left + g.dx, y - g.dy),
+            Offset(g.right + g.dx, y - g.dy), grid, 4, 4);
+        canvas.drawLine(Offset(g.left, y), Offset(g.left + g.dx, y - g.dy), grid);
+        if (v < maxY - 1e-6) {
+          final t = v % 1 == 0 ? v.toInt().toString() : v.toStringAsFixed(1);
+          _text(canvas, "$t$unit", Offset(g.left - 6, y),
+              white.withValues(alpha: .4), alignRight: true);
+        }
+      }
+    }
+
+    // ---------- Bars ----------
+    for (int i = 0; i < 7; i++) {
+      final local = ((grow * 1.4) - i / 7 * .4).clamp(0.0, 1.0);
+      final eased = Curves.easeOutBack.transform(local);
+      final v = values[i] * eased;
+      final x0 = g.left + g.slot * i + (g.slot - g.barW) / 2;
+      final x1 = x0 + g.barW;
+      final isSel = selected == i;
+
+      if (values[i] <= 0) {
+        final tile = Path()
+          ..moveTo(x0, g.bottom)
+          ..lineTo(x1, g.bottom)
+          ..lineTo(x1 + g.dx, g.bottom - g.dy)
+          ..lineTo(x0 + g.dx, g.bottom - g.dy)
+          ..close();
+        canvas.drawPath(tile, Paint()..color = white.withValues(alpha: .07));
+        continue;
+      }
+
+      final yTop = _y(v, g.top, g.bottom);
+      final base = metGoal[i] ? const Color(0xFF10B981) : const Color(0xFF6B5BFF);
+      final hi = metGoal[i] ? const Color(0xFF6EE7B7) : const Color(0xFF24E0FF);
+      final a = isSel || selected == null ? 1.0 : .78;
+
+      // Soft glow on the floor under the bar.
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset((x0 + x1) / 2 + g.dx / 2, g.bottom - g.dy / 2),
+          width: g.barW * 1.8,
+          height: g.dy * 1.4,
+        ),
+        Paint()
+          ..color = hi.withValues(alpha: .22 * eased.clamp(0.0, 1.0))
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+      );
+
+      final front = Rect.fromLTRB(x0, yTop, x1, g.bottom);
+      canvas.drawRect(
+        front,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [base.withValues(alpha: a), hi.withValues(alpha: a)],
+          ).createShader(front),
+      );
+      final side = Path()
+        ..moveTo(x1, g.bottom)
+        ..lineTo(x1 + g.dx, g.bottom - g.dy)
+        ..lineTo(x1 + g.dx, yTop - g.dy)
+        ..lineTo(x1, yTop)
+        ..close();
+      canvas.drawPath(
+        side,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.bottomCenter,
+            end: Alignment.topCenter,
+            colors: [
+              Color.lerp(base, Colors.black, .45)!.withValues(alpha: a),
+              Color.lerp(hi, Colors.black, .4)!.withValues(alpha: a),
+            ],
+          ).createShader(side.getBounds()),
+      );
+      final top = Path()
+        ..moveTo(x0, yTop)
+        ..lineTo(x1, yTop)
+        ..lineTo(x1 + g.dx, yTop - g.dy)
+        ..lineTo(x0 + g.dx, yTop - g.dy)
+        ..close();
+      canvas.drawPath(
+        top,
+        Paint()..color = Color.lerp(hi, Colors.white, .35)!.withValues(alpha: a),
+      );
+      // Thin highlight on the front's left edge.
+      canvas.drawLine(
+        Offset(x0 + .5, yTop),
+        Offset(x0 + .5, g.bottom),
+        Paint()
+          ..color = Colors.white.withValues(alpha: .25 * a)
+          ..strokeWidth = 1,
+      );
+
+      if (isSel) {
+        final outline = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2;
+        canvas.drawRect(front, outline);
+        canvas.drawPath(top, outline);
+        canvas.drawPath(side, outline);
+      }
+
+      // Value label above the bar (fades in at the end of the grow).
+      if (labels[i].isNotEmpty && local > .7) {
+        _text(
+          canvas,
+          labels[i],
+          Offset((x0 + x1) / 2 + g.dx / 2, yTop - g.dy - 9),
+          Colors.white.withValues(alpha: ((local - .7) / .3).clamp(0.0, 1.0)),
+          size: 9.5,
+          center: true,
+          weight: FontWeight.w700,
+        );
+      }
+    }
+
+    // ---------- Goal & average lines ----------
+    if (goalY > 0 && goalY <= maxY) {
+      final y = _y(goalY, g.top, g.bottom);
+      _dashed(canvas, Offset(g.left, y), Offset(g.right + g.dx, y),
+          Paint()
+            ..color = green.withValues(alpha: .9)
+            ..strokeWidth = 1.5,
+          3, 3);
+    }
+    if (avgY > 0 && avgY <= maxY) {
+      final y = _y(avgY * grow, g.top, g.bottom);
+      _dashed(canvas, Offset(g.left, y), Offset(g.right + g.dx, y),
+          Paint()
+            ..color = white.withValues(alpha: .6)
+            ..strokeWidth = 1.5,
+          6, 4);
+    }
+
+    // ---------- Day names ----------
+    for (int i = 0; i < 7; i++) {
+      final cx = g.left + g.slot * i + g.slot / 2;
+      _text(
+        canvas,
+        days[i],
+        Offset(cx, size.height - _bottomPad / 2 + 2),
+        selected == i ? Colors.white : white.withValues(alpha: .5),
+        size: 11,
+        center: true,
+        weight: selected == i ? FontWeight.w700 : FontWeight.w500,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_Week3DChartPainter old) =>
+      old.grow != grow ||
+      old.selected != selected ||
+      old.values != values ||
+      old.maxY != maxY ||
+      old.goalY != goalY ||
+      old.avgY != avgY;
+}
+
+
+// =====================================================================
+// 3D CONSISTENCY TRACK
+// A raised glossy rail with a soft floor shadow, a glass slab for the
+// ± spread, a glowing pin for the average and one shiny sphere per day
+// (with its own shadow) that drops in with a bounce.
+// =====================================================================
+class _Track3DPainter extends CustomPainter {
+  final List<({double pos, String letter})> points;
+  final double? mean; // 0..1
+  final double? halfSpread; // 0..1
+  final Color accent;
+  final bool useBedtimeLook;
+  final double t; // 0..1 animation
+
+  _Track3DPainter({
+    required this.points,
+    required this.mean,
+    required this.halfSpread,
+    required this.accent,
+    required this.useBedtimeLook,
+    required this.t,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const r = 13.0; // sphere radius
+    final w = size.width;
+    final railY = size.height * .62; // rail centre
+    const railH = 10.0;
+    double x(double f) => (w * f).clamp(r, w - r).toDouble();
+
+    // ---------- Floor shadow under the rail ----------
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(4, railY + railH / 2 + 3, w - 8, 6),
+        const Radius.circular(3),
+      ),
+      Paint()
+        ..color = Colors.black.withValues(alpha: .45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+    );
+
+    // ---------- Rail: front face (depth) + glossy tube top ----------
+    final railRect = Rect.fromLTWH(0, railY - railH / 2, w, railH);
+    final front = RRect.fromRectAndRadius(
+      railRect.shift(const Offset(0, 3)),
+      const Radius.circular(railH / 2),
+    );
+    canvas.drawRRect(
+      front,
+      Paint()..color = Color.lerp(accent, Colors.black, .7)!,
+    );
+    final tube = RRect.fromRectAndRadius(railRect, const Radius.circular(railH / 2));
+    canvas.drawRRect(
+      tube,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.lerp(accent, Colors.white, .25)!.withValues(alpha: .55),
+            accent.withValues(alpha: .35),
+            Color.lerp(accent, Colors.black, .5)!.withValues(alpha: .6),
+          ],
+          stops: const [0, .45, 1],
+        ).createShader(railRect),
+    );
+    // Gloss streak along the top of the tube.
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(6, railY - railH / 2 + 1.5, w - 12, 2.2),
+        const Radius.circular(1.2),
+      ),
+      Paint()..color = Colors.white.withValues(alpha: .22),
+    );
+    // Hour ticks every 6h on the rail.
+    for (final f in const [.25, .5, .75]) {
+      canvas.drawLine(
+        Offset(w * f, railY - railH / 2 + 2),
+        Offset(w * f, railY + railH / 2 - 1),
+        Paint()
+          ..color = Colors.white.withValues(alpha: .25)
+          ..strokeWidth = 1.2,
+      );
+    }
+
+    // ---------- Glass slab for the ± spread ----------
+    if (mean != null && halfSpread != null) {
+      final grow = Curves.easeOutCubic.transform(t.clamp(0.0, 1.0).toDouble());
+      final l = (mean! - halfSpread! * grow).clamp(0.0, 1.0).toDouble() * w;
+      final rr = (mean! + halfSpread! * grow).clamp(0.0, 1.0).toDouble() * w;
+      final slab = Rect.fromLTRB(l, railY - 17, math.max(rr, l + 4), railY + 13);
+      // depth (front face)
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(slab.shift(const Offset(0, 4)), const Radius.circular(9)),
+        Paint()..color = accent.withValues(alpha: .18),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(slab, const Radius.circular(9)),
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Colors.white.withValues(alpha: .16),
+              accent.withValues(alpha: .14),
+              accent.withValues(alpha: .22),
+            ],
+          ).createShader(slab),
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(slab, const Radius.circular(9)),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = accent.withValues(alpha: .55),
+      );
+      // top edge highlight
+      canvas.drawLine(
+        Offset(slab.left + 8, slab.top + 1.5),
+        Offset(slab.right - 8, slab.top + 1.5),
+        Paint()
+          ..color = Colors.white.withValues(alpha: .35)
+          ..strokeWidth = 1,
+      );
+    }
+
+    // ---------- Average pin (glowing pillar + cap) ----------
+    if (mean != null) {
+      final mx = w * mean!;
+      final pinTop = railY - 30;
+      canvas.drawLine(
+        Offset(mx, pinTop),
+        Offset(mx, railY + 16),
+        Paint()
+          ..color = Colors.white.withValues(alpha: .6)
+          ..strokeWidth = 5
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
+      );
+      canvas.drawLine(
+        Offset(mx, pinTop),
+        Offset(mx, railY + 16),
+        Paint()
+          ..color = Colors.white
+          ..strokeWidth = 2
+          ..strokeCap = StrokeCap.round,
+      );
+      canvas.drawCircle(
+        Offset(mx, pinTop),
+        4,
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-.4, -.4),
+            colors: [Colors.white, accent],
+          ).createShader(Rect.fromCircle(center: Offset(mx, pinTop), radius: 4)),
+      );
+    }
+
+    // ---------- Day spheres ----------
+    for (int k = 0; k < points.length; k++) {
+      final p = points[k];
+      // Staggered drop with a bounce.
+      final local = ((t * 1.5) - k / math.max(points.length, 1) * .5)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      final drop = Curves.bounceOut.transform(local);
+      final cx = x(p.pos);
+      final cy = railY - 2 - (1 - drop) * 40;
+      final opacity = (local * 3).clamp(0.0, 1.0).toDouble();
+
+      // Ground shadow on the rail (tighter as the ball lands).
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(cx + 2, railY + railH / 2 + 3),
+          width: r * (1.2 + .6 * drop),
+          height: 5,
+        ),
+        Paint()
+          ..color = Colors.black.withValues(alpha: .5 * drop)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3),
+      );
+
+      final c1 = useBedtimeLook ? const Color(0xFFB04BFF) : accent;
+      final c0 = Color.lerp(c1, Colors.white, .55)!;
+      final c2 = Color.lerp(c1, Colors.black, .55)!;
+      final ball = Rect.fromCircle(center: Offset(cx, cy), radius: r);
+
+      // Outer glow
+      canvas.drawCircle(
+        Offset(cx, cy),
+        r + 2,
+        Paint()
+          ..color = c1.withValues(alpha: .45 * opacity)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7),
+      );
+      // Sphere body
+      canvas.drawCircle(
+        Offset(cx, cy),
+        r,
+        Paint()
+          ..shader = RadialGradient(
+            center: const Alignment(-.35, -.45),
+            radius: 1.05,
+            colors: [
+              c0.withValues(alpha: opacity),
+              c1.withValues(alpha: opacity),
+              c2.withValues(alpha: opacity),
+            ],
+            stops: const [0, .5, 1],
+          ).createShader(ball),
+      );
+      // Rim
+      canvas.drawCircle(
+        Offset(cx, cy),
+        r,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = Colors.white.withValues(alpha: .25 * opacity),
+      );
+      // Specular highlight
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(cx - r * .35, cy - r * .45),
+          width: r * .7,
+          height: r * .4,
+        ),
+        Paint()..color = Colors.white.withValues(alpha: .55 * opacity),
+      );
+      // Day letter
+      final tp = TextPainter(
+        text: TextSpan(
+          text: p.letter,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: opacity),
+            fontSize: 10.5,
+            fontWeight: FontWeight.w800,
+            shadows: const [Shadow(color: Colors.black54, blurRadius: 2)],
+          ),
+        ),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2 + 1));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_Track3DPainter old) =>
+      old.t != t ||
+      old.mean != mean ||
+      old.halfSpread != halfSpread ||
+      old.points != points ||
+      old.accent != accent;
+}
+
+
+// =====================================================================
+// 3D BLOCK (Last 4 weeks bars)
+// Front face, darker right side, lighter top, plus a floor shadow.
+// =====================================================================
+class _Block3DPainter extends CustomPainter {
+  final Color color;
+  final Color highlight;
+  final bool selected;
+  final bool empty;
+
+  _Block3DPainter({
+    required this.color,
+    required this.highlight,
+    required this.selected,
+    required this.empty,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dx = math.min(size.width * .16, 14.0); // depth to the right
+    const dy = 10.0; // depth upwards
+    final w = size.width - dx;
+    final bottom = size.height;
+    final top = dy;
+
+    // Floor shadow
+    canvas.drawOval(
+      Rect.fromLTWH(-2, bottom - 7, w + dx + 6, 12),
+      Paint()
+        ..color = Colors.black.withValues(alpha: .45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
+
+    final front = Rect.fromLTRB(0, top, w, bottom);
+    final side = Path()
+      ..moveTo(w, bottom)
+      ..lineTo(w + dx, bottom - dy)
+      ..lineTo(w + dx, top - dy)
+      ..lineTo(w, top)
+      ..close();
+    final cap = Path()
+      ..moveTo(0, top)
+      ..lineTo(w, top)
+      ..lineTo(w + dx, top - dy)
+      ..lineTo(dx, top - dy)
+      ..close();
+
+    if (empty) {
+      canvas.drawRect(front, Paint()..color = color.withValues(alpha: .35));
+      canvas.drawPath(side, Paint()..color = color.withValues(alpha: .2));
+      canvas.drawPath(cap, Paint()..color = color.withValues(alpha: .5));
+      return;
+    }
+
+    if (selected) {
+      canvas.drawRect(
+        front.inflate(4),
+        Paint()
+          ..color = highlight.withValues(alpha: .35)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 14),
+      );
+    }
+
+    canvas.drawRect(
+      front,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [color, Color.lerp(color, highlight, .55)!],
+        ).createShader(front),
+    );
+    canvas.drawPath(
+      side,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Color.lerp(color, Colors.black, .55)!,
+            Color.lerp(color, Colors.black, .35)!,
+          ],
+        ).createShader(side.getBounds()),
+    );
+    canvas.drawPath(
+      cap,
+      Paint()..color = Color.lerp(highlight, Colors.white, .3)!,
+    );
+    // Glossy edge on the front's left side.
+    canvas.drawLine(
+      Offset(1, top),
+      Offset(1, bottom),
+      Paint()
+        ..color = Colors.white.withValues(alpha: .3)
+        ..strokeWidth = 1.5,
+    );
+    if (selected) {
+      final o = Paint()
+        ..color = Colors.white.withValues(alpha: .85)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2;
+      canvas.drawRect(front, o);
+      canvas.drawPath(cap, o);
+      canvas.drawPath(side, o);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_Block3DPainter old) =>
+      old.color != color ||
+      old.highlight != highlight ||
+      old.selected != selected ||
+      old.empty != empty;
+}
+
+
+// =====================================================================
+// 3D PRESS KEY — raised square button that sinks when pressed.
+// =====================================================================
+class _PressKey extends StatefulWidget {
+  final VoidCallback onTap;
+  final double size;
+  final double radius;
+  final Widget child;
+
+  const _PressKey({
+    required this.onTap,
+    required this.size,
+    required this.radius,
+    required this.child,
+  });
+
+  @override
+  State<_PressKey> createState() => _PressKeyState();
+}
+
+class _PressKeyState extends State<_PressKey> {
+  bool _down = false;
+  static const double _depth = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        widget.onTap();
+      },
+      child: SizedBox(
+        width: widget.size,
+        height: widget.size + _depth,
+        child: Stack(
+          children: [
+            // Key "base" (the dark side you see below the face).
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: widget.size,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF07041A),
+                  borderRadius: BorderRadius.circular(widget.radius),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: .5),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
+                  ],
+                ),
+              ),
+            ),
+            // Key face — slides down when pressed.
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 90),
+              curve: Curves.easeOut,
+              left: 0,
+              right: 0,
+              top: _down ? _depth : 0,
+              height: widget.size,
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(widget.radius),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: const [Color(0xFF2E2570), Color(0xFF1A1448)],
                   ),
-              ],
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: .18),
+                  ),
+                ),
+                child: widget.child,
+              ),
             ),
           ],
-        );
+        ),
+      ),
+    );
+  }
+}
+
+
+// =====================================================================
+// 3D GOAL KEY — raised key that sinks when pressed (goal picker).
+// =====================================================================
+class _GoalKey extends StatefulWidget {
+  final String label;
+  final bool selected;
+  final bool healthy;
+  final VoidCallback onTap;
+
+  const _GoalKey({
+    required this.label,
+    required this.selected,
+    required this.healthy,
+    required this.onTap,
+  });
+
+  @override
+  State<_GoalKey> createState() => _GoalKeyState();
+}
+
+class _GoalKeyState extends State<_GoalKey> {
+  bool _down = false;
+  static const double _w = 76, _h = 44, _depth = 5;
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = widget.selected;
+    final face = sel
+        ? const [Color(0xFF5BE8B0), Color(0xFF18B983)]
+        : const [Color(0xFF2E2570), Color(0xFF1A1448)];
+    final base = sel ? const Color(0xFF0B6B4A) : const Color(0xFF07041A);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        // Let the press animation show before the sheet closes.
+        Future.delayed(const Duration(milliseconds: 120), widget.onTap);
       },
+      child: SizedBox(
+        width: _w,
+        height: _h + _depth,
+        child: Stack(
+          children: [
+            // Base (key side)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: _h,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: base,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: sel
+                          ? const Color(0xFF34D399).withValues(alpha: .45)
+                          : Colors.black.withValues(alpha: .45),
+                      blurRadius: sel ? 16 : 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Face
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 90),
+              curve: Curves.easeOut,
+              left: 0,
+              right: 0,
+              top: _down ? _depth : 0,
+              height: _h,
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: face,
+                  ),
+                  border: Border.all(
+                    color: sel
+                        ? Colors.white.withValues(alpha: .45)
+                        : widget.healthy
+                        ? const Color(0xFF34D399).withValues(alpha: .4)
+                        : Colors.white.withValues(alpha: .14),
+                  ),
+                ),
+                child: Text(
+                  widget.label,
+                  style: GoogleFonts.outfit(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    shadows: const [
+                      Shadow(color: Colors.black45, offset: Offset(0, 1.5)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:esp32_ble_app/retro_switch.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -36,16 +37,17 @@ const Color _magenta = Color(0xFFB04BFF);
 const Color _amber = Color(0xFFFFB547);
 const Color _flame = Color(0xFFFF5E3A);
 
+// Lit from the top so every fill reads as a glossy 3D surface.
 const LinearGradient _mainGradient = LinearGradient(
-  colors: [_violet, _violet],
-  begin: Alignment.topLeft,
-  end: Alignment.bottomRight,
+  colors: [Color(0xFF9084FF), _violet],
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
 );
 
 const LinearGradient _heatGradient = LinearGradient(
-  colors: [_amber, _amber],
-  begin: Alignment.topLeft,
-  end: Alignment.bottomRight,
+  colors: [Color(0xFFFFC875), _amber],
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
 );
 
 /// Ring is "full" at this many seconds (longer timers just show a full ring).
@@ -71,14 +73,86 @@ TextStyle _eyebrow({Color? color}) => TextStyle(
   fontWeight: FontWeight.w600,
 );
 
+// Raised 3D glass (no shadow): lit top, darker base, bright rim.
 BoxDecoration _glass({double radius = 24}) => BoxDecoration(
   borderRadius: BorderRadius.circular(radius),
   gradient: LinearGradient(
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-    colors: [_white(.085), _white(.085)],
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [_white(.13), _white(.03)],
   ),
-  border: Border.all(color: _white(.09)),
+  border: Border.all(color: _white(.14)),
+);
+
+/// 3D slab tinted with [c] (no shadow).
+BoxDecoration _slab3D(Color c, {double radius = 24, double alpha = .4}) =>
+    BoxDecoration(
+      borderRadius: BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color.lerp(c, Colors.white, .08)!.withValues(alpha: alpha),
+          c.withValues(alpha: alpha * .35),
+        ],
+      ),
+      border: Border.all(color: Colors.white.withValues(alpha: .15)),
+    );
+
+/// Glossy key face: lit top, darker base, bright rim.
+BoxDecoration _gloss3D(Color c, {double radius = 12, bool circle = false}) =>
+    BoxDecoration(
+      shape: circle ? BoxShape.circle : BoxShape.rectangle,
+      borderRadius: circle ? null : BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color.lerp(c, Colors.white, .28)!,
+          Color.lerp(c, Colors.black, .2)!,
+        ],
+      ),
+      border: Border.all(color: Colors.white.withValues(alpha: .28)),
+    );
+
+/// Shine painted over a glossy face (top-half highlight).
+BoxDecoration _shine3D({double radius = 12, bool circle = false, double a = .24}) =>
+    BoxDecoration(
+      shape: circle ? BoxShape.circle : BoxShape.rectangle,
+      borderRadius: circle ? null : BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.white.withValues(alpha: a),
+          Colors.white.withValues(alpha: 0),
+        ],
+        stops: const [0, .5],
+      ),
+    );
+
+/// Recessed groove (pressed into the surface).
+BoxDecoration _sunk3D({double radius = 8}) => BoxDecoration(
+  borderRadius: BorderRadius.circular(radius),
+  gradient: LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      Colors.black.withValues(alpha: .45),
+      Colors.white.withValues(alpha: .05),
+    ],
+  ),
+  border: Border.all(color: Colors.white.withValues(alpha: .07)),
+);
+
+/// Glossy pearl slider thumb.
+BoxDecoration _pearl3D(Color rim, {double width = 2.5}) => BoxDecoration(
+  shape: BoxShape.circle,
+  gradient: const RadialGradient(
+    center: Alignment(-.3, -.4),
+    colors: [Colors.white, Color(0xFFDCD8F0)],
+  ),
+  border: Border.all(color: rim, width: width),
 );
 
 class SetTimerScreen extends StatefulWidget {
@@ -256,37 +330,19 @@ class _SetTimerScreenState extends State<SetTimerScreen>
 
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            _amber.withValues(alpha: .18),
-            _amber.withValues(alpha: .18),
-          ],
-        ),
-        border: Border.all(color: _amber.withValues(alpha: .3)),
+      decoration: _slab3D(_amber, radius: 20, alpha: .3).copyWith(
+        border: Border.all(color: _amber.withValues(alpha: .4)),
       ),
       child: Row(
         children: [
           Container(
             width: 40,
             height: 40,
+            foregroundDecoration: _shine3D(radius: 13),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [_amber, _amber],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
+              gradient: _gloss3D(_amber).gradient,
+              border: Border.all(color: Colors.white.withValues(alpha: .28)),
               borderRadius: BorderRadius.circular(13),
-              boxShadow: [
-                BoxShadow(
-                  color: _amber.withValues(alpha: .4),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
             ),
             child: const Icon(
               Icons.auto_awesome_rounded,
@@ -596,16 +652,12 @@ class _SetTimerScreenState extends State<SetTimerScreen>
             borderRadius: BorderRadius.circular(12),
             gradient: on
                 ? _mainGradient
-                : LinearGradient(colors: [_white(.12), _white(.12)]),
-            boxShadow: on
-                ? [
-                    BoxShadow(
-                      color: _violet.withValues(alpha: .45),
-                      blurRadius: 14,
-                      offset: const Offset(0, 4),
-                    ),
-                  ]
-                : null,
+                : LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [_white(.2), _white(.06)],
+                  ),
+            border: Border.all(color: Colors.white.withValues(alpha: .25)),
           ),
           child: Icon(
             on ? Icons.alarm_on_rounded : Icons.alarm_off_rounded,
@@ -638,14 +690,9 @@ class _SetTimerScreenState extends State<SetTimerScreen>
             ],
           ),
         ),
-        Switch(
+        RetroSwitch(
           value: _alarmOn,
-          activeThumbColor: Colors.white,
-          activeTrackColor: _violet,
-          inactiveThumbColor: _white(.7),
-          inactiveTrackColor: _white(.12),
           onChanged: (on) {
-            HapticFeedback.selectionClick();
             setState(() {
               _alarmOn = on;
               // Turning it on with no time yet: suggest one cycle-friendly
@@ -733,25 +780,18 @@ class _SetTimerScreenState extends State<SetTimerScreen>
           onTap: _pickWakeTime,
           child: Container(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+            foregroundDecoration: _shine3D(radius: 22, a: .06),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(22),
               gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
                 colors: [
-                  _violet.withValues(alpha: .22),
-                  _violet.withValues(alpha: .22),
-                  _violet.withValues(alpha: .22),
+                  Color.lerp(_violet, Colors.white, .08)!.withValues(alpha: .34),
+                  _violet.withValues(alpha: .08),
                 ],
               ),
-              border: Border.all(color: _violet.withValues(alpha: .35)),
-              boxShadow: [
-                BoxShadow(
-                  color: _violet.withValues(alpha: .15),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ],
+              border: Border.all(color: _violet.withValues(alpha: .45)),
             ),
             child: Column(
               children: [
@@ -763,13 +803,6 @@ class _SetTimerScreenState extends State<SetTimerScreen>
                       decoration: BoxDecoration(
                         gradient: _mainGradient,
                         borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: _violet.withValues(alpha: .5),
-                            blurRadius: 16,
-                            offset: const Offset(0, 5),
-                          ),
-                        ],
                       ),
                       child: const Icon(
                         Icons.alarm_rounded,
@@ -959,14 +992,10 @@ class _SetTimerScreenState extends State<SetTimerScreen>
                         decoration: selected
                             ? BoxDecoration(
                                 gradient: _mainGradient,
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: .3),
+                                ),
                                 borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _violet.withValues(alpha: .45),
-                                    blurRadius: 14,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
                               )
                             : _glass(radius: 16),
                         child: Column(
@@ -1373,25 +1402,18 @@ class _SetTimerScreenState extends State<SetTimerScreen>
 
     return Container(
       padding: const EdgeInsets.all(16),
+      foregroundDecoration: _shine3D(radius: 26, a: .07),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(26),
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            _violet.withValues(alpha: .40),
-            _violet.withValues(alpha: .40),
-            _violet.withValues(alpha: .40),
+            Color.lerp(_violet, Colors.white, .08)!.withValues(alpha: .55),
+            _violet.withValues(alpha: .2),
           ],
         ),
-        border: Border.all(color: _white(.12)),
-        boxShadow: [
-          BoxShadow(
-            color: _violet.withValues(alpha: .22),
-            blurRadius: 28,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        border: Border.all(color: _white(.16)),
       ),
       child: Row(
         children: [
@@ -1461,11 +1483,9 @@ class _SetTimerScreenState extends State<SetTimerScreen>
         Container(
           width: 30,
           height: 30,
-          decoration: BoxDecoration(
-            color: _white(.08),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(icon, color: _cyan, size: 16),
+          decoration: _gloss3D(const Color(0xFF1FB5D6), radius: 10),
+          foregroundDecoration: _shine3D(radius: 10),
+          child: Icon(icon, color: Colors.white, size: 16),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -1506,14 +1526,8 @@ class _SetTimerScreenState extends State<SetTimerScreen>
   BoxDecoration _pillDecoration(bool selected) => selected
       ? BoxDecoration(
           gradient: _mainGradient,
+          border: Border.all(color: Colors.white.withValues(alpha: .3)),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: _violet.withValues(alpha: .45),
-              blurRadius: 14,
-              offset: const Offset(0, 5),
-            ),
-          ],
         )
       : _glass(radius: 16);
 
@@ -1759,20 +1773,18 @@ class _SetTimerScreenState extends State<SetTimerScreen>
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(9),
-            gradient: selected ? gradient : null,
-            color: selected ? null : _white(.045),
+            gradient: selected
+                ? gradient
+                : LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [_white(.1), _white(.025)],
+                  ),
             border: Border.all(
-              color: selected ? Colors.transparent : _white(.07),
+              color: selected
+                  ? Colors.white.withValues(alpha: .3)
+                  : _white(.12),
             ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: gradient.colors.last.withValues(alpha: .4),
-                      blurRadius: 10,
-                      offset: const Offset(0, 2),
-                    ),
-                  ]
-                : null,
           ),
           child: Text(
             text,
@@ -1808,29 +1820,22 @@ class _SetTimerScreenState extends State<SetTimerScreen>
       duration: const Duration(milliseconds: 350),
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+      foregroundDecoration: _shine3D(radius: 20, a: .06),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            gradient.colors.first.withValues(alpha: tint),
-            gradient.colors.first.withValues(alpha: tint),
-            gradient.colors.first.withValues(alpha: tint),
+            Color.lerp(accent, Colors.white, .08)!.withValues(alpha: tint + .14),
+            accent.withValues(alpha: tint * .5),
           ],
         ),
         border: Border.all(
-          color: on ? accent.withValues(alpha: .15 + .25 * l) : _white(.09),
+          color: on
+              ? accent.withValues(alpha: .25 + .25 * l)
+              : Colors.white.withValues(alpha: .13),
         ),
-        boxShadow: on
-            ? [
-                BoxShadow(
-                  color: accent.withValues(alpha: .06 + .1 * l),
-                  blurRadius: 20,
-                  offset: const Offset(0, 6),
-                ),
-              ]
-            : null,
       ),
       child: Column(
         children: [
@@ -1843,19 +1848,13 @@ class _SetTimerScreenState extends State<SetTimerScreen>
                 decoration: BoxDecoration(
                   gradient: on
                       ? gradient
-                      : LinearGradient(colors: [_white(.14), _white(.14)]),
+                      : LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [_white(.2), _white(.06)],
+                        ),
+                  border: Border.all(color: Colors.white.withValues(alpha: .25)),
                   borderRadius: BorderRadius.circular(10),
-                  boxShadow: on
-                      ? [
-                          BoxShadow(
-                            color: gradient.colors.first.withValues(
-                              alpha: .3 + .3 * l,
-                            ),
-                            blurRadius: 8 + 8 * l,
-                            offset: const Offset(0, 3),
-                          ),
-                        ]
-                      : null,
                 ),
                 child: Icon(icon, color: Colors.white, size: 17),
               ),
@@ -1877,9 +1876,6 @@ class _SetTimerScreenState extends State<SetTimerScreen>
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: on ? accent : _white(.3),
-                  boxShadow: on
-                      ? [BoxShadow(color: accent, blurRadius: 5)]
-                      : null,
                 ),
               ),
               const SizedBox(width: 5),
@@ -2032,10 +2028,7 @@ class _GlowSlider extends StatelessWidget {
                   right: thumb / 2,
                   child: Container(
                     height: track,
-                    decoration: BoxDecoration(
-                      color: _white(.09),
-                      borderRadius: BorderRadius.circular(track / 2),
-                    ),
+                    decoration: _sunk3D(radius: track / 2),
                   ),
                 ),
                 // Step dots
@@ -2062,12 +2055,6 @@ class _GlowSlider extends StatelessWidget {
                     decoration: BoxDecoration(
                       gradient: gradient,
                       borderRadius: BorderRadius.circular(track / 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: gradient.colors.last.withValues(alpha: .5),
-                          blurRadius: 12,
-                        ),
-                      ],
                     ),
                   ),
                 ),
@@ -2078,20 +2065,7 @@ class _GlowSlider extends StatelessWidget {
                   child: Container(
                     width: thumb,
                     height: thumb,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
-                      border: Border.all(
-                        color: gradient.colors.last,
-                        width: 2.5,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: gradient.colors.last.withValues(alpha: .6),
-                          blurRadius: 14,
-                        ),
-                      ],
-                    ),
+                    decoration: _pearl3D(gradient.colors.last),
                   ),
                 ),
               ],
@@ -2128,23 +2102,18 @@ class _PillButton extends StatelessWidget {
           decoration: gradient != null
               ? BoxDecoration(
                   gradient: gradient,
+                  border: Border.all(color: Colors.white.withValues(alpha: .3)),
                   borderRadius: BorderRadius.circular(18),
-                  boxShadow: enabled
-                      ? [
-                          BoxShadow(
-                            color: _violet.withValues(alpha: .45),
-                            blurRadius: 18,
-                            offset: const Offset(0, 6),
-                          ),
-                        ]
-                      : null,
                 )
               : _glass(radius: 18),
           child: InkWell(
             onTap: onTap,
             borderRadius: BorderRadius.circular(18),
-            child: SizedBox(
+            child: Container(
               height: 52,
+              foregroundDecoration: gradient != null
+                  ? _shine3D(radius: 18, a: .2)
+                  : null,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -2207,21 +2176,41 @@ class _DialPainter extends CustomPainter {
       );
     }
 
-    // Track
+    // Domed inner disc: lit top, darker bottom.
+    canvas.drawCircle(
+      center,
+      radius - stroke / 2 - 3,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [_white(.14), _white(.02)],
+        ).createShader(rect),
+    );
+    canvas.drawCircle(
+      center,
+      radius - stroke / 2 - 3,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = _white(.16),
+    );
+
+    // Recessed track
     canvas.drawCircle(
       center,
       radius,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
-        ..color = _white(.08),
+        ..color = Colors.black.withValues(alpha: .3),
     );
 
     if (p <= 0) return;
 
     final sweep = math.max(2 * math.pi * p, 0.05);
     final shader = const SweepGradient(
-      colors: [_violet, _violet, _violet, _violet],
+      colors: [Color(0xFF9084FF), _violet, Color(0xFF9084FF)],
       transform: GradientRotation(-math.pi / 2),
     ).createShader(rect);
 
@@ -2231,31 +2220,24 @@ class _DialPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round
       ..shader = shader;
 
+    canvas.drawArc(rect, -math.pi / 2, sweep, false, arcPaint);
+    // Glossy highlight line along the tube (no glow).
     canvas.drawArc(
-      rect,
+      Rect.fromCircle(center: center, radius: radius + stroke * .2),
       -math.pi / 2,
       sweep,
       false,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
+        ..strokeWidth = 1.6
         ..strokeCap = StrokeCap.round
-        ..shader = shader
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+        ..color = Colors.white.withValues(alpha: .4),
     );
-    canvas.drawArc(rect, -math.pi / 2, sweep, false, arcPaint);
 
     // Knob at the end of the arc
     final endAngle = -math.pi / 2 + sweep;
     final knob =
         center + Offset(math.cos(endAngle), math.sin(endAngle)) * radius;
-    canvas.drawCircle(
-      knob,
-      stroke * .9,
-      Paint()
-        ..color = _cyan.withValues(alpha: .6)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-    );
     canvas.drawCircle(knob, stroke * .55, Paint()..color = Colors.white);
   }
 
@@ -2344,11 +2326,7 @@ class _ComfortSlider extends StatelessWidget {
                   right: thumb / 2,
                   child: Container(
                     height: track,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .25),
-                      borderRadius: BorderRadius.circular(track / 2),
-                      border: Border.all(color: _white(.07)),
-                    ),
+                    decoration: _sunk3D(radius: track / 2),
                   ),
                 ),
                 AnimatedPositioned(
@@ -2361,12 +2339,6 @@ class _ComfortSlider extends StatelessWidget {
                     decoration: BoxDecoration(
                       gradient: gradient,
                       borderRadius: BorderRadius.circular(track / 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: accent.withValues(alpha: .55),
-                          blurRadius: 12,
-                        ),
-                      ],
                     ),
                   ),
                 ),
@@ -2392,20 +2364,9 @@ class _ComfortSlider extends StatelessWidget {
                     width: thumb,
                     height: thumb,
                     alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: accent.withValues(alpha: .7),
-                          blurRadius: 14,
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: .35),
-                          blurRadius: 5,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                    decoration: _pearl3D(
+                      accent.withValues(alpha: .6),
+                      width: 1.5,
                     ),
                     child: Container(
                       width: 8,

@@ -115,6 +115,11 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
   // ===== WAKE-UP ALARM =====
   // Rings the phone at this time (pillow stays off). Set on the timer page.
   DateTime? _wakeAlarmTime;
+  // Pillow temperature log: one sample a minute while a session runs,
+  // saved on the session doc as "temp_samples" for the Sleep Log chart.
+  Timer? _tempLogTimer;
+  String? _tempLogDocId;
+  DateTime? _lastTempLogAt;
   Timer? _alarmTimer; // in-app backup so the Good Morning screen pops up
   bool _alarmRinging = false;
   static const int _snoozeMinutes = 5;
@@ -134,6 +139,11 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
   @override
   void initState() {
     super.initState();
+
+    _tempLogTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _logPillowTemperature(),
+    );
 
     // Sleep sounds loop seamlessly until paused, Wake, or the alarm.
     _audioPlayer.setReleaseMode(ReleaseMode.loop);
@@ -1182,6 +1192,41 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
     }
   }
 
+  /// Appends the current pillow temperature to the running session —
+  /// right away for a new session, then once a minute.
+  Future<void> _logPillowTemperature() async {
+    final docId = activeSessionDocId;
+    final start = sessionStartTime;
+    if (docId == null || start == null) return;
+    if (!bleConnected || !hasPillowTemperature) return;
+
+    final now = DateTime.now();
+    final isNew = docId != _tempLogDocId;
+    if (!isNew &&
+        _lastTempLogAt != null &&
+        now.difference(_lastTempLogAt!) < const Duration(seconds: 60)) {
+      return;
+    }
+    _tempLogDocId = docId;
+    _lastTempLogAt = now;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection("vibrator_logs")
+          .doc(docId)
+          .update({
+            "temp_samples": FieldValue.arrayUnion([
+              {
+                "t": now.difference(start).inSeconds, // seconds into session
+                "c": double.parse(pillowTemperature.toStringAsFixed(1)),
+              },
+            ]),
+          });
+    } catch (e) {
+      debugPrint("TEMP LOG ERROR: $e");
+    }
+  }
+
   @override
   void dispose() {
     sessionCountdownTimer?.cancel();
@@ -1190,6 +1235,7 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
     _playerStateSub?.cancel(); // player itself is owned by the media service
     _sleepTicker?.cancel();
     _alarmTimer?.cancel();
+    _tempLogTimer?.cancel();
     AlarmService.instance.tapped.removeListener(_onAlarmRing);
     AlarmService.instance.bedtimeTapped.removeListener(_onBedtimeTapped);
     _ambient.dispose();
@@ -1199,6 +1245,20 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
   // ===================================================================
   // UI ACTIONS — same logic as before, moved out of build() unchanged
   // ===================================================================
+  /// Lowest motor power (%) sent for any level above Off. Small vibration
+  /// motors barely spin at low PWM, so the slider is mapped onto
+  /// [_minMotorPower]..100 instead of 0..100.
+  /// Slider 25% → 70%, 50% → 80%, 75% → 90%, 100% → 100%.
+  /// Raise this if low levels still feel weak, lower it if they feel too strong.
+  static const int _minMotorPower = 60;
+
+  /// Converts the slider value (0..1) into the power sent to the pillow.
+  int _motorPower(double level) {
+    final l = level.clamp(0.0, 1.0);
+    if (l <= 0) return 0;
+    return (_minMotorPower + (100 - _minMotorPower) * l).round();
+  }
+
   Future<void> _onVibrationChanged(double val) async {
     setState(() {
       vibrationLevel = val;
@@ -1206,7 +1266,7 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
     });
 
     if (BLEManager.instance.connected) {
-      await BLEManager.instance.send("VIB:${(val * 100).round()}");
+      await BLEManager.instance.send("VIB:${_motorPower(val)}");
     }
   }
 
@@ -1304,7 +1364,7 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
       newSessionDocId = docRef.id;
 
       await BLEManager.instance.send(
-        "VIB:${(currentSessionLevel * 100).round()}",
+        "VIB:${_motorPower(currentSessionLevel)}",
       );
       await BLEManager.instance.send("HEAT:${heatLevel.round()}");
       await BLEManager.instance.send("ON");
@@ -1565,25 +1625,34 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+      // 3D slab without shadows: lit top, darker base, bright rim.
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            accent.withValues(alpha: on ? .18 : .14),
-            accent.withValues(alpha: on ? .18 : .14),
-            accent.withValues(alpha: on ? .18 : .14),
+            Color.lerp(accent, Colors.white, .1)!.withValues(
+              alpha: on ? .30 : .26,
+            ),
+            accent.withValues(alpha: on ? .10 : .07),
           ],
         ),
-        border: Border.all(color: accent.withValues(alpha: on ? .4 : .22)),
-        boxShadow: [
-          BoxShadow(
-            color: accent.withValues(alpha: on ? .18 : .1),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        border: Border.all(
+          color: Colors.white.withValues(alpha: on ? .2 : .14),
+        ),
+      ),
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: .07),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0, .45],
+        ),
       ),
       child: Row(
         children: [
@@ -1623,30 +1692,39 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                       duration: const Duration(milliseconds: 300),
                       width: 50,
                       height: 50,
+                      // Glossy 3D key (no shadow).
                       decoration: BoxDecoration(
-                        gradient: on
-                            ? _greenGradient
-                            : LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  _violet.withValues(alpha: .45),
-                                  _violet.withValues(alpha: .45),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: on
+                              ? [
+                                  Color.lerp(_green, Colors.white, .3)!,
+                                  const Color(0xFF0F9F72),
+                                ]
+                              : [
+                                  Color.lerp(_violet, Colors.white, .12)!
+                                      .withValues(alpha: .8),
+                                  Color.lerp(_violet, Colors.black, .35)!
+                                      .withValues(alpha: .7),
                                 ],
-                              ),
+                        ),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: on ? Colors.transparent : _white(.12),
+                          color: Colors.white.withValues(alpha: .25),
                         ),
-                        boxShadow: on
-                            ? [
-                                BoxShadow(
-                                  color: _green.withValues(alpha: .45),
-                                  blurRadius: 16,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ]
-                            : null,
+                      ),
+                      foregroundDecoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.white.withValues(alpha: .28),
+                            Colors.white.withValues(alpha: 0),
+                          ],
+                          stops: const [0, .5],
+                        ),
                       ),
                       child: Icon(
                         on
@@ -1705,7 +1783,14 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                       ),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(5),
-                        color: _white(.08),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: .4),
+                            Colors.white.withValues(alpha: .05),
+                          ],
+                        ),
                         border: Border.all(color: _white(.1)),
                       ),
                       child: Text(
@@ -1784,9 +1869,17 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                         height: 42,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: _red.withValues(alpha: .12),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Color.lerp(_red, Colors.white, .2)!
+                                  .withValues(alpha: .32),
+                              _red.withValues(alpha: .08),
+                            ],
+                          ),
                           border: Border.all(
-                            color: _red.withValues(alpha: .45),
+                            color: _red.withValues(alpha: .55),
                           ),
                         ),
                         child: const Icon(
@@ -1800,10 +1893,10 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                 : Stack(
                     key: const ValueKey("connect"),
                     children: [
-                      _PillButton(
+                      _Glossy3DButton(
                         label: "Connect",
                         icon: Icons.bluetooth_rounded,
-                        gradient: _mainGradient,
+                        color: _violet,
                         height: 42,
                         onTap: _onBleTap,
                       ),
@@ -1854,8 +1947,15 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
-        color: color.withValues(alpha: .13),
-        border: Border.all(color: color.withValues(alpha: .4)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.lerp(color, Colors.white, .15)!.withValues(alpha: .3),
+            color.withValues(alpha: .08),
+          ],
+        ),
+        border: Border.all(color: color.withValues(alpha: .45)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1949,26 +2049,20 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
     return AnimatedContainer(
       duration: const Duration(milliseconds: 500),
       curve: Curves.easeOutCubic,
+      // 3D slab, no shadows: lit top, darker base, bright rim + shine.
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            accent.first.withValues(alpha: .36),
-            accent.first.withValues(alpha: .36),
-            accent.first.withValues(alpha: .36),
+            Color.lerp(accent.first, Colors.white, .08)!.withValues(alpha: .5),
+            accent.first.withValues(alpha: .18),
           ],
         ),
-        border: Border.all(color: accent.first.withValues(alpha: .32)),
-        boxShadow: [
-          BoxShadow(
-            color: accent.first.withValues(alpha: .24),
-            blurRadius: 30,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        border: Border.all(color: Colors.white.withValues(alpha: .16)),
       ),
+      foregroundDecoration: _shine3D(radius: 28, a: .08),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(28),
         child: Stack(
@@ -2150,11 +2244,7 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                           constraints: const BoxConstraints(minWidth: 92),
                           alignment: Alignment.center,
                           padding: const EdgeInsets.symmetric(horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: .2),
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: _white(.1)),
-                          ),
+                          decoration: _raised3D(_cyan, radius: 18),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -2200,10 +2290,10 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                                   children: [
                                     Expanded(
                                       flex: 3,
-                                      child: _PillButton(
+                                      child: _Glossy3DButton(
                                         label: "Wake",
                                         icon: Icons.wb_sunny_rounded,
-                                        gradient: _greenGradient,
+                                        color: const Color(0xFF10B981),
                                         height: 48,
                                         onTap: _onWake,
                                       ),
@@ -2211,51 +2301,25 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                                     const SizedBox(width: 8),
                                     Expanded(
                                       flex: 2,
-                                      child: _PillButton(
+                                      child: _Glossy3DButton(
                                         label: "Stop",
                                         icon: Icons.stop_rounded,
-                                        gradient: _redGradient,
+                                        color: const Color(0xFFFF4D67),
                                         height: 48,
                                         onTap: _onStop,
                                       ),
                                     ),
                                   ],
                                 )
-                              : AnimatedBuilder(
+                              : SizedBox(
                                   key: const ValueKey("idle"),
-                                  animation: _ambient,
-                                  builder: (context, child) {
-                                    // Gentle "breathing" glow (~2s cycle).
-                                    final pulse =
-                                        .5 +
-                                        .5 *
-                                            math.sin(
-                                              _ambient.value * 2 * math.pi * 10,
-                                            );
-                                    return DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(18),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: _cyan.withValues(
-                                              alpha: .1 + .18 * pulse,
-                                            ),
-                                            blurRadius: 14 + 10 * pulse,
-                                          ),
-                                        ],
-                                      ),
-                                      child: child,
-                                    );
-                                  },
-                                  child: SizedBox(
-                                    width: double.infinity,
-                                    child: _PillButton(
-                                      label: "Start Session",
-                                      icon: Icons.play_arrow_rounded,
-                                      gradient: _mainGradient,
-                                      height: 48,
-                                      onTap: _onStartSession,
-                                    ),
+                                  width: double.infinity,
+                                  child: _Glossy3DButton(
+                                    label: "Start Session",
+                                    icon: Icons.play_arrow_rounded,
+                                    color: _violet,
+                                    height: 48,
+                                    onTap: _onStartSession,
                                   ),
                                 ),
                         ),
@@ -2289,16 +2353,10 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
           Container(
             width: 22,
             height: 22,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(7),
-              gradient: dim
-                  ? LinearGradient(colors: [_white(.1), _white(.1)])
-                  : LinearGradient(
-                      colors: [colors.first, colors.first],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-            ),
+            decoration: dim
+                ? _sunk3D(radius: 7)
+                : _gloss3D(colors.first, radius: 7),
+            foregroundDecoration: dim ? null : _shine3D(radius: 7, a: .22),
             child: Icon(icon, color: dim ? _white(.5) : Colors.white, size: 12),
           ),
           const SizedBox(width: 8),
@@ -2306,20 +2364,24 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
           const SizedBox(width: 6),
           if (level != null)
             Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: Container(
-                  height: 3,
-                  color: _white(.08),
-                  alignment: Alignment.centerLeft,
-                  child: AnimatedFractionallySizedBox(
-                    duration: const Duration(milliseconds: 300),
-                    widthFactor: level.clamp(0.0, 1.0),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [colors.first, colors.first],
-                        ),
+              // Recessed groove with a glossy fill.
+              child: Container(
+                height: 6,
+                decoration: _sunk3D(radius: 3),
+                alignment: Alignment.centerLeft,
+                child: AnimatedFractionallySizedBox(
+                  duration: const Duration(milliseconds: 300),
+                  widthFactor: level.clamp(0.0, 1.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(3),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color.lerp(colors.first, Colors.white, .4)!,
+                          colors.first,
+                        ],
                       ),
                     ),
                   ),
@@ -2359,10 +2421,8 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
         : _cyan;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: .15),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: c.withValues(alpha: .4)),
+      decoration: _raised3D(c, radius: 20).copyWith(
+        border: Border.all(color: c.withValues(alpha: .5)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -2469,13 +2529,13 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
     final known = hasPillowTemperature;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: (known ? _amber : _white(1)).withValues(
-          alpha: known ? .14 : .06,
-        ),
+      decoration: _raised3D(
+        known ? _amber : Colors.white,
+        radius: 20,
+        strength: known ? 1.0 : .5,
+      ).copyWith(
         border: Border.all(
-          color: known ? _amber.withValues(alpha: .45) : _white(.1),
+          color: known ? _amber.withValues(alpha: .5) : _white(.14),
         ),
       ),
       child: Row(
@@ -2519,23 +2579,11 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
           height: 30,
           margin: const EdgeInsets.symmetric(horizontal: 3),
           alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(11),
-            gradient: selected ? gradient : null,
-            color: selected ? null : _white(.05),
-            border: Border.all(
-              color: selected ? Colors.transparent : _white(.08),
-            ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: gradient.colors.last.withValues(alpha: .45),
-                      blurRadius: 12,
-                      offset: const Offset(0, 3),
-                    ),
-                  ]
-                : null,
-          ),
+          // Selected = glossy key; others = soft raised keys.
+          decoration: selected
+              ? _gloss3D(gradient.colors.last, radius: 11)
+              : _raised3D(Colors.white, radius: 11, strength: .45),
+          foregroundDecoration: selected ? _shine3D(radius: 11) : null,
           child: Text(
             text,
             style: _display(
@@ -2569,30 +2617,25 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
       duration: const Duration(milliseconds: 350),
       curve: Curves.easeOutCubic,
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      // 3D slab, no shadows: lit top fading to a darker base.
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            gradient.colors.first.withValues(alpha: tint),
-            gradient.colors.first.withValues(alpha: tint),
-            gradient.colors.first.withValues(alpha: tint),
+            Color.lerp(gradient.colors.first, Colors.white, .08)!
+                .withValues(alpha: tint + .14),
+            gradient.colors.first.withValues(alpha: tint * .5),
           ],
         ),
         border: Border.all(
-          color: on ? accent.withValues(alpha: .18 + .25 * level) : _white(.09),
+          color: on
+              ? accent.withValues(alpha: .25 + .25 * level)
+              : Colors.white.withValues(alpha: .12),
         ),
-        boxShadow: on
-            ? [
-                BoxShadow(
-                  color: accent.withValues(alpha: .08 + .12 * level),
-                  blurRadius: 24,
-                  offset: const Offset(0, 8),
-                ),
-              ]
-            : null,
       ),
+      foregroundDecoration: _shine3D(radius: 24, a: .06),
       child: Column(
         children: [
           Row(
@@ -2602,23 +2645,10 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                 duration: const Duration(milliseconds: 350),
                 width: 44,
                 height: 44,
-                decoration: BoxDecoration(
-                  gradient: on
-                      ? gradient
-                      : LinearGradient(colors: [_white(.14), _white(.14)]),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: on
-                      ? [
-                          BoxShadow(
-                            color: gradient.colors.first.withValues(
-                              alpha: .3 + .3 * level,
-                            ),
-                            blurRadius: 10 + 10 * level,
-                            offset: const Offset(0, 4),
-                          ),
-                        ]
-                      : null,
-                ),
+                decoration: on
+                    ? _gloss3D(gradient.colors.first, radius: 14)
+                    : _raised3D(Colors.white, radius: 14, strength: .6),
+                foregroundDecoration: on ? _shine3D(radius: 14) : null,
                 child: Icon(icon, color: Colors.white, size: 22),
               ),
               const SizedBox(width: 12),
@@ -2637,9 +2667,10 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: on ? accent : _white(.3),
-                            boxShadow: on
-                                ? [BoxShadow(color: accent, blurRadius: 6)]
-                                : null,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: .35),
+                              width: .8,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 6),
@@ -2696,19 +2727,26 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
     return AnimatedContainer(
       duration: const Duration(milliseconds: 400),
       padding: const EdgeInsets.all(14),
+      // 3D slab, no shadows: lit top fading to a darker base.
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: hasSound
-              ? [glow.withValues(alpha: .22), glow.withValues(alpha: .22)]
-              : [_white(.085), _white(.085)],
+              ? [
+                  Color.lerp(glow, Colors.white, .08)!.withValues(alpha: .32),
+                  glow.withValues(alpha: .08),
+                ]
+              : [_white(.12), _white(.03)],
         ),
         border: Border.all(
-          color: hasSound ? accent.withValues(alpha: .35) : _white(.09),
+          color: hasSound
+              ? accent.withValues(alpha: .4)
+              : Colors.white.withValues(alpha: .13),
         ),
       ),
+      foregroundDecoration: _shine3D(radius: 22, a: .06),
       child: Column(
         children: [
           Row(
@@ -2737,17 +2775,8 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                     key: ValueKey(selectedSoundFile),
                     width: 50,
                     height: 50,
-                    decoration: BoxDecoration(
-                      gradient: gradient,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: glow.withValues(alpha: .45),
-                          blurRadius: 14,
-                          offset: const Offset(0, 5),
-                        ),
-                      ],
-                    ),
+                    decoration: _gloss3D(glow, radius: 16),
+                    foregroundDecoration: _shine3D(radius: 16),
                     child: Icon(
                       info?.icon ?? Icons.music_note_rounded,
                       color: Colors.white,
@@ -2800,15 +2829,18 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
                   child: Container(
                     width: 46,
                     height: 46,
+                    // Glossy pearl play button (no shadow).
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: glow.withValues(alpha: .45),
-                          blurRadius: 14,
-                        ),
-                      ],
+                      gradient: const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.white, Color(0xFFCFCBE6)],
+                      ),
+                      border: Border.all(
+                        color: glow.withValues(alpha: .6),
+                        width: 1.5,
+                      ),
                     ),
                     child: Icon(
                       playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
@@ -2840,14 +2872,21 @@ class _ComfortNapScreenState extends State<ComfortNapScreen>
           GestureDetector(
             onTap: _openSounds,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-              decoration: BoxDecoration(
-                color: _white(.06),
-                borderRadius: BorderRadius.circular(14),
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              decoration: _raised3D(glow, radius: 14, strength: .7),
               child: Row(
                 children: [
-                  Icon(Icons.library_music_rounded, color: accent, size: 18),
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: _gloss3D(glow, radius: 9),
+                    foregroundDecoration: _shine3D(radius: 9),
+                    child: const Icon(
+                      Icons.library_music_rounded,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     hasSound ? "Change sound" : "Browse sleep sounds",
@@ -2886,6 +2925,68 @@ const Color _flame = Color(0xFFFF5E3A);
 const Color _green = Color(0xFF34D399);
 const Color _red = Color(0xFFFF4D67);
 const Color _pink = Color(0xFFFF6FA5);
+
+// ---------- No-shadow 3D helpers ----------
+/// Glossy key face: lit top, darker base, bright rim.
+BoxDecoration _gloss3D(Color c, {double radius = 12, bool circle = false}) =>
+    BoxDecoration(
+      shape: circle ? BoxShape.circle : BoxShape.rectangle,
+      borderRadius: circle ? null : BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color.lerp(c, Colors.white, .28)!,
+          Color.lerp(c, Colors.black, .22)!,
+        ],
+      ),
+      border: Border.all(color: Colors.white.withValues(alpha: .28)),
+    );
+
+/// Shine painted over a glossy face (top half highlight).
+BoxDecoration _shine3D({double radius = 12, bool circle = false, double a = .26}) =>
+    BoxDecoration(
+      shape: circle ? BoxShape.circle : BoxShape.rectangle,
+      borderRadius: circle ? null : BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Colors.white.withValues(alpha: a),
+          Colors.white.withValues(alpha: 0),
+        ],
+        stops: const [0, .5],
+      ),
+    );
+
+/// Raised translucent panel / chip.
+BoxDecoration _raised3D(Color c, {double radius = 12, double strength = 1}) =>
+    BoxDecoration(
+      borderRadius: BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color.lerp(c, Colors.white, .14)!.withValues(alpha: .3 * strength),
+          c.withValues(alpha: .07 * strength),
+        ],
+      ),
+      border: Border.all(color: Colors.white.withValues(alpha: .14)),
+    );
+
+/// Recessed groove (pressed into the surface).
+BoxDecoration _sunk3D({double radius = 8}) => BoxDecoration(
+  borderRadius: BorderRadius.circular(radius),
+  gradient: LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      Colors.black.withValues(alpha: .45),
+      Colors.white.withValues(alpha: .05),
+    ],
+  ),
+  border: Border.all(color: Colors.white.withValues(alpha: .07)),
+);
 
 const LinearGradient _mainGradient = LinearGradient(
   colors: [_violet, _violet],
@@ -3108,10 +3209,7 @@ class _GlowSlider extends StatelessWidget {
                   right: thumb / 2,
                   child: Container(
                     height: track,
-                    decoration: BoxDecoration(
-                      color: _white(.09),
-                      borderRadius: BorderRadius.circular(track / 2),
-                    ),
+                    decoration: _sunk3D(radius: track / 2),
                   ),
                 ),
                 if (steps != null)
@@ -3133,16 +3231,11 @@ class _GlowSlider extends StatelessWidget {
                   width: math.max(usable * v, 0),
                   child: Container(
                     height: track,
-                    decoration: BoxDecoration(
-                      gradient: gradient,
-                      borderRadius: BorderRadius.circular(track / 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: gradient.colors.last.withValues(alpha: .5),
-                          blurRadius: 10,
-                        ),
-                      ],
+                    decoration: _gloss3D(
+                      gradient.colors.last,
+                      radius: track / 2,
                     ),
+                    foregroundDecoration: _shine3D(radius: track / 2, a: .35),
                   ),
                 ),
                 AnimatedPositioned(
@@ -3151,19 +3244,17 @@ class _GlowSlider extends StatelessWidget {
                   child: Container(
                     width: thumb,
                     height: thumb,
+                    // Glossy pearl thumb (no shadow).
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white,
+                      gradient: const RadialGradient(
+                        center: Alignment(-.3, -.4),
+                        colors: [Colors.white, Color(0xFFDCD8F0)],
+                      ),
                       border: Border.all(
                         color: gradient.colors.last,
                         width: 2.5,
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: gradient.colors.last.withValues(alpha: .6),
-                          blurRadius: 12,
-                        ),
-                      ],
                     ),
                   ),
                 ),
@@ -3207,12 +3298,23 @@ class _HeroRingPainter extends CustomPainter {
       center,
       radius - stroke / 2 - 4,
       Paint()
-        ..shader = RadialGradient(
+        // Domed disc: lit top, darker bottom.
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
-            colors.first.withValues(alpha: .22),
-            colors.first.withValues(alpha: .22),
+            Color.lerp(colors.first, Colors.white, .12)!.withValues(alpha: .38),
+            colors.first.withValues(alpha: .12),
           ],
         ).createShader(Rect.fromCircle(center: center, radius: radius)),
+    );
+    canvas.drawCircle(
+      center,
+      radius - stroke / 2 - 4,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = Colors.white.withValues(alpha: .16),
     );
 
     // Tick dial (60 ticks, lit up to the progress)
@@ -3245,7 +3347,7 @@ class _HeroRingPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
-        ..color = Colors.white.withValues(alpha: .07),
+        ..color = Colors.black.withValues(alpha: .3),
     );
 
     if (empty) {
@@ -3273,19 +3375,7 @@ class _HeroRingPainter extends CustomPainter {
         transform: const GradientRotation(-math.pi / 2),
       ).createShader(rect);
 
-      // Glow + crisp arc
-      canvas.drawArc(
-        rect,
-        -math.pi / 2,
-        sweep,
-        false,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = stroke + 6
-          ..strokeCap = StrokeCap.round
-          ..shader = shader
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 12),
-      );
+      // Crisp arc + glossy highlight line (no glow).
       canvas.drawArc(
         rect,
         -math.pi / 2,
@@ -3297,18 +3387,22 @@ class _HeroRingPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round
           ..shader = shader,
       );
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius + stroke * .2),
+        -math.pi / 2,
+        sweep,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.8
+          ..strokeCap = StrokeCap.round
+          ..color = Colors.white.withValues(alpha: .4),
+      );
 
       // End knob
       if (p < 1) {
         final ea = -math.pi / 2 + sweep;
         final knob = center + Offset(math.cos(ea), math.sin(ea)) * radius;
-        canvas.drawCircle(
-          knob,
-          10,
-          Paint()
-            ..color = colors.last.withValues(alpha: .6)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-        );
         canvas.drawCircle(knob, 7, Paint()..color = Colors.white);
         canvas.drawCircle(knob, 3.5, Paint()..color = colors.last);
       }
@@ -3318,13 +3412,6 @@ class _HeroRingPainter extends CustomPainter {
     if (live) {
       final oa = -math.pi / 2 + spin * 2 * math.pi * 6;
       final spark = center + Offset(math.cos(oa), math.sin(oa)) * (outer - 2);
-      canvas.drawCircle(
-        spark,
-        5,
-        Paint()
-          ..color = colors.last.withValues(alpha: .7)
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
-      );
       canvas.drawCircle(spark, 2.2, Paint()..color = Colors.white);
     }
   }
@@ -3456,11 +3543,7 @@ class _ComfortSlider extends StatelessWidget {
                   right: thumb / 2,
                   child: Container(
                     height: track,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: .25),
-                      borderRadius: BorderRadius.circular(track / 2),
-                      border: Border.all(color: _white(.07)),
-                    ),
+                    decoration: _sunk3D(radius: track / 2),
                   ),
                 ),
                 // Fill
@@ -3471,16 +3554,8 @@ class _ComfortSlider extends StatelessWidget {
                   width: math.max(usable * v, 0),
                   child: Container(
                     height: track,
-                    decoration: BoxDecoration(
-                      gradient: gradient,
-                      borderRadius: BorderRadius.circular(track / 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: accent.withValues(alpha: .55),
-                          blurRadius: 14,
-                        ),
-                      ],
-                    ),
+                    decoration: _gloss3D(accent, radius: track / 2),
+                    foregroundDecoration: _shine3D(radius: track / 2, a: .35),
                   ),
                 ),
                 // Segment marks
@@ -3506,20 +3581,17 @@ class _ComfortSlider extends StatelessWidget {
                   child: Container(
                     width: thumb,
                     height: thumb,
+                    // Glossy pearl thumb (no shadow).
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(
-                          color: accent.withValues(alpha: .7),
-                          blurRadius: 16,
-                        ),
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: .35),
-                          blurRadius: 6,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      gradient: const RadialGradient(
+                        center: Alignment(-.3, -.4),
+                        colors: [Colors.white, Color(0xFFDCD8F0)],
+                      ),
+                      border: Border.all(
+                        color: accent.withValues(alpha: .6),
+                        width: 1.5,
+                      ),
                     ),
                     alignment: Alignment.center,
                     child: Container(
@@ -3608,7 +3680,6 @@ class _JournalButtonState extends State<_JournalButton> {
             AnimatedBuilder(
               animation: widget.animation,
               builder: (context, _) {
-                final turn = widget.animation.value * 2 * math.pi * 3;
                 final glow =
                     .5 +
                     .5 * math.sin(widget.animation.value * 2 * math.pi * 8);
@@ -3624,31 +3695,27 @@ class _JournalButtonState extends State<_JournalButton> {
                         width: size,
                         height: size,
                         padding: const EdgeInsets.all(1.6),
+                        // Bevelled rim: lit on top, darker underneath.
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(18),
-                          gradient: SweepGradient(
-                            colors: const [_violet, _violet, _violet, _violet],
-                            transform: GradientRotation(turn),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Color.lerp(_violet, Colors.white, .45)!,
+                              _violet,
+                              Color.lerp(_violet, Colors.black, .35)!,
+                            ],
                           ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: _violet.withValues(alpha: .3 + .25 * glow),
-                              blurRadius: 14 + 8 * glow,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
                         ),
                         // Glossy inner tile
                         child: Container(
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(16.4),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: [
-                                const Color(0xFF2B2170),
-                                const Color(0xFF2B2170),
-                              ],
+                            gradient: const LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0xFF4A3BC4), Color(0xFF221A5E)],
                             ),
                           ),
                           child: Stack(
@@ -3669,24 +3736,17 @@ class _JournalButtonState extends State<_JournalButton> {
                                       begin: Alignment.topCenter,
                                       end: Alignment.bottomCenter,
                                       colors: [
-                                        Colors.white.withValues(alpha: 0),
+                                        Colors.white.withValues(alpha: .26),
                                         Colors.white.withValues(alpha: 0),
                                       ],
                                     ),
                                   ),
                                 ),
                               ),
-                              ShaderMask(
-                                blendMode: BlendMode.srcIn,
-                                shaderCallback: (r) => const LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [Colors.white, Colors.white],
-                                ).createShader(r),
-                                child: const Icon(
-                                  Icons.auto_stories_rounded,
-                                  size: 25,
-                                ),
+                              // Checklist + clock: your sleep sessions, logged.
+                              const CustomPaint(
+                                size: Size(30, 30),
+                                painter: _SleepLogIconPainter(),
                               ),
                             ],
                           ),
@@ -3701,18 +3761,17 @@ class _JournalButtonState extends State<_JournalButton> {
                           height: 22,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            gradient: const LinearGradient(
-                              colors: [_amber, _amber],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
+                            // Glossy bead
+                            gradient: RadialGradient(
+                              center: const Alignment(-.35, -.4),
+                              colors: [
+                                Color.lerp(_amber, Colors.white, .55)!,
+                                _amber,
+                                Color.lerp(_amber, Colors.black, .25)!,
+                              ],
+                              stops: const [0, .55, 1],
                             ),
                             border: Border.all(color: _bg, width: 2.5),
-                            boxShadow: [
-                              BoxShadow(
-                                color: _amber.withValues(alpha: .4 + .3 * glow),
-                                blurRadius: 8,
-                              ),
-                            ],
                           ),
                           child: const Icon(
                             Icons.nightlight_round,
@@ -3754,4 +3813,209 @@ class _JournalButtonState extends State<_JournalButton> {
       ),
     );
   }
+}
+
+/// Glossy 3D pill button without any shadow: lit top, darker base,
+/// bright rim and a shine; sinks a little when pressed.
+class _Glossy3DButton extends StatefulWidget {
+  final String label;
+  final IconData? icon;
+  final Color color;
+  final double height;
+  final VoidCallback? onTap;
+  const _Glossy3DButton({
+    required this.label,
+    required this.color,
+    this.icon,
+    this.height = 50,
+    this.onTap,
+  });
+
+  @override
+  State<_Glossy3DButton> createState() => _Glossy3DButtonState();
+}
+
+class _Glossy3DButtonState extends State<_Glossy3DButton> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = BorderRadius.circular(widget.height / 2.6);
+    final c = widget.color;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        widget.onTap?.call();
+      },
+      child: AnimatedScale(
+        scale: _down ? .95 : 1,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: Container(
+          height: widget.height,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: r,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: _down
+                  ? [
+                      Color.lerp(c, Colors.black, .1)!,
+                      Color.lerp(c, Colors.black, .3)!,
+                    ]
+                  : [
+                      Color.lerp(c, Colors.white, .25)!,
+                      Color.lerp(c, Colors.black, .2)!,
+                    ],
+            ),
+            border: Border.all(color: Colors.white.withValues(alpha: .3)),
+          ),
+          foregroundDecoration: BoxDecoration(
+            borderRadius: r,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.white.withValues(alpha: _down ? .08 : .22),
+                Colors.white.withValues(alpha: 0),
+              ],
+              stops: const [0, .5],
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (widget.icon != null) ...[
+                Icon(widget.icon, color: Colors.white, size: 18),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                widget.label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Sleep Log icon: a checklist with a clock, drawn in the app's colours
+/// (white paper, cyan ticks, amber pending box, violet/cyan clock).
+class _SleepLogIconPainter extends CustomPainter {
+  const _SleepLogIconPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final u = size.width / 30; // design grid: 30 x 30
+
+    // ---------- Paper ----------
+    final paper = RRect.fromRectAndRadius(
+      Rect.fromLTWH(2 * u, 1.5 * u, 17 * u, 23 * u),
+      Radius.circular(3.2 * u),
+    );
+    canvas.drawRRect(
+      paper,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.white, Color(0xFFDCD8F5)],
+        ).createShader(paper.outerRect),
+    );
+
+    // ---------- Checklist rows ----------
+    void box(double y, Color c, {bool checked = true}) {
+      final r = RRect.fromRectAndRadius(
+        Rect.fromLTWH(4.6 * u, y, 4.4 * u, 4.4 * u),
+        Radius.circular(1.2 * u),
+      );
+      if (checked) {
+        canvas.drawRRect(r, Paint()..color = c);
+        final tick = Path()
+          ..moveTo(5.6 * u, y + 2.3 * u)
+          ..lineTo(6.6 * u, y + 3.3 * u)
+          ..lineTo(8.1 * u, y + 1.3 * u);
+        canvas.drawPath(
+          tick,
+          Paint()
+            ..color = Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.1 * u
+            ..strokeCap = StrokeCap.round
+            ..strokeJoin = StrokeJoin.round,
+        );
+      } else {
+        canvas.drawRRect(r, Paint()..color = c);
+        canvas.drawRRect(
+          r.deflate(1.1 * u),
+          Paint()..color = Colors.white.withValues(alpha: .85),
+        );
+      }
+      // the text line next to the box
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(10.6 * u, y + 1.5 * u, 6 * u, 1.5 * u),
+          Radius.circular(.75 * u),
+        ),
+        Paint()..color = const Color(0xFF2B2170).withValues(alpha: .35),
+      );
+    }
+
+    box(4.2 * u, const Color(0xFF1FB5D6));
+    box(10.0 * u, const Color(0xFF1FB5D6));
+    box(15.8 * u, _amber, checked: false);
+
+    // ---------- Clock ----------
+    final c = Offset(20.5 * u, 20.5 * u);
+    final r = 8.2 * u;
+    // dark ring separates the clock from the paper
+    canvas.drawCircle(c, r + 1.3 * u, Paint()..color = const Color(0xFF2B2170));
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF6EE7F9), Color(0xFF1FB5D6)],
+        ).createShader(Rect.fromCircle(center: c, radius: r)),
+    );
+    // face
+    canvas.drawCircle(c, r - 1.6 * u, Paint()..color = Colors.white);
+    // hour ticks
+    for (int i = 0; i < 12; i += 3) {
+      final a = i / 12 * 2 * math.pi;
+      final dir = Offset(math.sin(a), -math.cos(a));
+      canvas.drawLine(
+        c + dir * (r - 3.0 * u),
+        c + dir * (r - 2.3 * u),
+        Paint()
+          ..color = const Color(0xFF2B2170).withValues(alpha: .5)
+          ..strokeWidth = .9 * u
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+    // hands (about 10:10, bedtime)
+    final hand = Paint()
+      ..color = const Color(0xFF2B2170)
+      ..strokeWidth = 1.3 * u
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(c, c + Offset(-2.4 * u, -1.9 * u), hand);
+    canvas.drawLine(c, c + Offset(2.6 * u, -3.4 * u), hand..color = _violet);
+    canvas.drawCircle(c, 1.1 * u, Paint()..color = const Color(0xFF2B2170));
+  }
+
+  @override
+  bool shouldRepaint(_SleepLogIconPainter oldDelegate) => false;
 }

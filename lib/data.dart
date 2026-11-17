@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
@@ -39,7 +40,6 @@ const Color _danger = Color(0xFFFF4D67);
 const Color _green = Color(0xFF34D399);
 
 /// Daily sleep goal used by the progress ring. Change to suit your app.
-const int _dailySleepGoalSeconds = 8 * 3600;
 
 const LinearGradient _sleepGradient = LinearGradient(
   colors: [_violet, _cyan],
@@ -83,6 +83,178 @@ BoxDecoration _glass({double radius = 24, double strength = 1}) =>
       ),
       border: Border.all(color: _white(.09)),
     );
+
+// ===================================================================
+// 3D HELPERS (same look as the Weekly / Monthly pages)
+// ===================================================================
+/// Raised 3D slab: solid darker edge, glow, glossy sheen, bright top edge.
+Widget _slab3D({
+  required Color tint,
+  required Widget child,
+  double radius = 24,
+  EdgeInsets padding = const EdgeInsets.all(14),
+  double depth = 6,
+}) {
+  return Container(
+    child: ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color.lerp(tint, const Color(0xFF151040), .35)!,
+                    Color.lerp(tint, const Color(0xFF0B0726), .72)!,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            height: 50,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withValues(alpha: .10),
+                    Colors.white.withValues(alpha: 0),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(color: Colors.white.withValues(alpha: .1)),
+              ),
+            ),
+          ),
+          Positioned(
+            left: radius,
+            right: radius,
+            top: 0,
+            height: 1.2,
+            child: ColoredBox(color: Colors.white.withValues(alpha: .35)),
+          ),
+          Padding(padding: padding, child: child),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Recessed tray (pressed into the card).
+BoxDecoration _tray3D({double radius = 14}) => BoxDecoration(
+  borderRadius: BorderRadius.circular(radius),
+  gradient: LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      Colors.black.withValues(alpha: .34),
+      Colors.black.withValues(alpha: .12),
+    ],
+  ),
+  border: Border.all(color: Colors.white.withValues(alpha: .07)),
+);
+
+/// Raised 3D key / chip.
+BoxDecoration _key3D(Color tint, {double radius = 12, BoxShape? shape}) =>
+    BoxDecoration(
+      shape: shape ?? BoxShape.rectangle,
+      borderRadius: shape == BoxShape.circle
+          ? null
+          : BorderRadius.circular(radius),
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color.lerp(tint, Colors.white, .14)!.withValues(alpha: .34),
+          tint.withValues(alpha: .14),
+        ],
+      ),
+      border: Border.all(color: Colors.white.withValues(alpha: .14)),
+    );
+
+/// Glossy 3D icon tile.
+BoxDecoration _iconKey3D(Color c, {Gradient? gradient, double radius = 12}) =>
+    BoxDecoration(
+      borderRadius: BorderRadius.circular(radius),
+      gradient:
+          gradient ??
+          LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color.lerp(c, Colors.white, .28)!, c],
+          ),
+      border: Border.all(color: Colors.white.withValues(alpha: .22)),
+    );
+
+/// Makes any 3D key sink a little while pressed.
+class _Press3D extends StatefulWidget {
+  final VoidCallback onTap;
+  final Widget child;
+  final double travel;
+  const _Press3D({required this.onTap, required this.child, this.travel = 3});
+
+  @override
+  State<_Press3D> createState() => _Press3DState();
+}
+
+class _Press3DState extends State<_Press3D> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _down = true),
+      onTapCancel: () => setState(() => _down = false),
+      onTapUp: (_) => setState(() => _down = false),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        widget.onTap();
+      },
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(end: _down ? widget.travel : 0),
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        builder: (context, dy, child) =>
+            Transform.translate(offset: Offset(0, dy), child: child),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+/// "7h", "7h 30m" or "45m" for a goal length in seconds.
+String _goalLabel(int seconds) {
+  final h = seconds ~/ 3600;
+  final m = (seconds % 3600) ~/ 60;
+  if (h > 0) return m == 0 ? "${h}h" : "${h}h ${m}m";
+  return "${m}m";
+}
+
+/// Minutes from starting a session to falling asleep, or null when the
+/// pillow didn't detect sleep (or the times look wrong).
+int? _fallAsleepSeconds(Map<String, dynamic> data) {
+  final start = data["start_time"];
+  final asleep = data["sleep_start_time"];
+  if (start is! Timestamp || asleep is! Timestamp) return null;
+  final secs = asleep.toDate().difference(start.toDate()).inSeconds;
+  if (secs < 0 || secs > 4 * 3600) return null;
+  return secs;
+}
 
 String _formatDuration(int totalSeconds) {
   final h = totalSeconds ~/ 3600;
@@ -217,8 +389,29 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
   // ✅ ADDED ONLY
   final Map<String, Map<String, dynamic>> _deletedCache = {};
 
+  /// Daily sleep goal — the same one you set on the Weekly page
+  /// (Firestore app_settings/sleep_goal), kept live.
+  int _dailySleepGoalSeconds = 30 * 60;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _goalSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _goalSub = FirebaseFirestore.instance
+        .collection("app_settings")
+        .doc("sleep_goal")
+        .snapshots()
+        .listen((snap) {
+          final v = snap.data()?["seconds"];
+          if (v is num && v > 0 && mounted) {
+            setState(() => _dailySleepGoalSeconds = v.toInt());
+          }
+        }, onError: (e) => debugPrint("GOAL LOAD ERROR: $e"));
+  }
+
   @override
   void dispose() {
+    _goalSub?.cancel();
     _ambient.dispose();
     super.dispose();
   }
@@ -235,10 +428,24 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     _deletedCache[docId] = data;
     HapticFeedback.mediumImpact();
 
-    await FirebaseFirestore.instance
-        .collection("vibrator_logs")
-        .doc(docId)
-        .delete();
+    final logs = FirebaseFirestore.instance.collection("vibrator_logs");
+
+    // A night added by hand also has a linked "sleep" record (that's what
+    // Weekly / Monthly count) — remove it too, and keep it for UNDO.
+    final linked = <String, Map<String, dynamic>>{};
+    if (data["manual"] == true) {
+      try {
+        final q = await logs.where("session_doc_id", isEqualTo: docId).get();
+        for (final d in q.docs) {
+          linked[d.id] = d.data();
+          await d.reference.delete();
+        }
+      } catch (e) {
+        debugPrint("LINKED DELETE ERROR: $e");
+      }
+    }
+
+    await logs.doc(docId).delete();
 
     if (!mounted) return;
 
@@ -274,6 +481,9 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                   .collection("vibrator_logs")
                   .doc(docId)
                   .set(restored);
+              for (final e in linked.entries) {
+                await logs.doc(e.key).set(e.value);
+              }
 
               _deletedCache.remove(docId);
             }
@@ -292,6 +502,135 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
       _deletedCache.remove(docId);
       if (open) messenger.hideCurrentSnackBar();
     });
+  }
+
+  // ================= ADD A MISSED NIGHT =================
+  /// Opens the sheet to log a night by hand.
+  void _openAddNight() {
+    HapticFeedback.selectionClick();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      builder: (_) => _AddNightSheet(day: DateUtils.dateOnly(selectedDate)),
+    ).then((result) {
+      if (result is (DateTime, DateTime)) _saveManualNight(result.$1, result.$2);
+    });
+  }
+
+  /// Saves a hand-entered night as a session (for this page) plus a linked
+  /// sleep record (for Weekly / Monthly), so streaks and averages count it.
+  Future<void> _saveManualNight(DateTime bed, DateTime wake) async {
+    final secs = wake.difference(bed).inSeconds;
+    final logs = FirebaseFirestore.instance.collection("vibrator_logs");
+    final sessionRef = logs.doc();
+    final batch = FirebaseFirestore.instance.batch();
+    batch.set(sessionRef, {
+      "type": "session",
+      "manual": true,
+      "start_time": Timestamp.fromDate(bed),
+      "end_time": Timestamp.fromDate(wake),
+      "wake_time": Timestamp.fromDate(wake),
+      "actual_sleep_duration_seconds": secs,
+      "duration": secs,
+      "completion_reason": "manual_entry",
+      "timestamp": Timestamp.fromDate(bed),
+    });
+    batch.set(logs.doc(), {
+      "type": "sleep",
+      "manual": true,
+      "session_doc_id": sessionRef.id,
+      "sleep_start": Timestamp.fromDate(bed),
+      "session_start": Timestamp.fromDate(bed),
+      "sleep_end": Timestamp.fromDate(wake),
+      "sleep_duration_seconds": secs,
+      "sleep_duration_minutes": (secs + 59) ~/ 60,
+      "status": "completed",
+      "timestamp": Timestamp.fromDate(bed),
+    });
+    try {
+      await batch.commit();
+      if (!mounted) return;
+      HapticFeedback.mediumImpact();
+      _goToDate(bed);
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: _green, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  "Night added · ${_formatDuration(secs)}",
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: _surface,
+          elevation: 0,
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: _white(.1)),
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      debugPrint("ADD NIGHT ERROR: $e");
+    }
+  }
+
+  /// Raised 3D bar that opens the "add a missed night" sheet.
+  Widget _addNightButton() {
+    return _Press3D(
+      onTap: _openAddNight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: _key3D(_violet, radius: 18),
+        child: Row(
+          children: [
+            Container(
+              width: 30,
+              height: 30,
+              decoration: _iconKey3D(_violet, gradient: _sleepGradient, radius: 10),
+              child: const Icon(
+                Icons.add_rounded,
+                color: Colors.white,
+                size: 20,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Add a missed night",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    "Forgot to start a session? Log it by hand",
+                    style: TextStyle(color: _white(.5), fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: _white(.6), size: 20),
+          ],
+        ),
+      ),
+    );
   }
 
   int _sessionSeconds(Map<String, dynamic> data) {
@@ -469,6 +808,9 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
             for (final doc in shortSessions)
               _FadeSlideIn(index: i++, child: _sessionCardFor(doc)),
         ],
+        // Can't log a night that hasn't happened yet.
+        if (!dayKey.isAfter(DateUtils.dateOnly(DateTime.now())))
+          _FadeSlideIn(index: i++, child: _addNightButton()),
       ],
     );
 
@@ -531,9 +873,11 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
           onTap: () => Navigator.pop(context),
         ),
         const Spacer(),
-        Container(
-          padding: const EdgeInsets.fromLTRB(6, 6, 6, 5),
-          decoration: _glass(radius: 20),
+        _slab3D(
+          tint: _violet,
+          radius: 20,
+          depth: 5,
+          padding: const EdgeInsets.fromLTRB(6, 8, 6, 6),
           child: Row(
             children: [
               _barButton(Icons.bar_chart_rounded, "Week", _cyan, () async {
@@ -579,19 +923,13 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
   }) {
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: Ink(
-          decoration: _glass(radius: 16),
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(16),
-            child: SizedBox(
-              width: 48,
-              height: 48,
-              child: Icon(icon, color: Colors.white, size: 20),
-            ),
-          ),
+      child: _Press3D(
+        onTap: onTap,
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: _key3D(_violet, radius: 16),
+          child: Icon(icon, color: Colors.white, size: 20),
         ),
       ),
     );
@@ -611,36 +949,27 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     };
     return Tooltip(
       message: tooltip,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () {
-            HapticFeedback.selectionClick();
-            onTap();
-          },
-          borderRadius: BorderRadius.circular(14),
-          splashColor: color.withValues(alpha: .18),
-          highlightColor: color.withValues(alpha: .1),
-          child: Padding(
+      child: _Press3D(
+        onTap: onTap,
+        travel: 2.5,
+        child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Glossy 3D icon key
                 Container(
                   width: 34,
                   height: 34,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: .16),
-                    borderRadius: BorderRadius.circular(11),
-                    border: Border.all(color: color.withValues(alpha: .4)),
-                  ),
-                  child: Icon(icon, color: color, size: 18),
+                  decoration: _iconKey3D(color, radius: 11),
+                  child: Icon(icon, color: Colors.white, size: 18),
                 ),
                 const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(
                   label,
                   style: TextStyle(
-                    color: _white(.75),
+                    color: _white(.8),
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
                     letterSpacing: .3,
@@ -649,16 +978,26 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
               ],
             ),
           ),
-        ),
       ),
     );
   }
 
+  // Engraved groove: dark line + light line.
   Widget _barDivider() => Container(
-    width: 1,
-    height: 30,
+    width: 2,
+    height: 32,
     margin: const EdgeInsets.symmetric(horizontal: 2),
-    color: _white(.08),
+    decoration: BoxDecoration(
+      gradient: LinearGradient(
+        colors: [
+          Colors.black.withValues(alpha: .45),
+          Colors.black.withValues(alpha: .45),
+          Colors.white.withValues(alpha: .08),
+          Colors.white.withValues(alpha: .08),
+        ],
+        stops: const [0, .5, .5, 1],
+      ),
+    ),
   );
 
   // ===================================================================
@@ -697,7 +1036,7 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
           padding: const EdgeInsets.only(bottom: 4),
           child: isToday
               ? _chip("Today", gradient: _sleepGradient)
-              : GestureDetector(
+              : _Press3D(
                   onTap: () => _goToDate(DateTime.now()),
                   child: _chip("Jump to today", icon: Icons.restore_rounded),
                 ),
@@ -708,26 +1047,21 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
 
   Widget _chip(String text, {Gradient? gradient, IconData? icon}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      padding: EdgeInsets.fromLTRB(icon != null ? 5 : 12, 5, 12, 5),
       decoration: gradient != null
-          ? BoxDecoration(
-              gradient: gradient,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: _violet.withValues(alpha: .45),
-                  blurRadius: 14,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            )
-          : _glass(radius: 20),
+          ? _iconKey3D(_violet, gradient: gradient, radius: 20)
+          : _key3D(_violet, radius: 20),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 14, color: Colors.white),
-            const SizedBox(width: 5),
+            Container(
+              width: 24,
+              height: 24,
+              decoration: _iconKey3D(_cyan, gradient: _sleepGradient, radius: 12),
+              child: Icon(icon, size: 14, color: Colors.white),
+            ),
+            const SizedBox(width: 7),
           ],
           Text(
             text,
@@ -754,9 +1088,10 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
       weekStart.day + 6,
     );
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-      decoration: _glass(radius: 26),
+    return _slab3D(
+      tint: _violet,
+      radius: 26,
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
       child: Column(
         children: [
           Row(
@@ -787,7 +1122,7 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: List.generate(7, (index) {
               final day = DateTime(
@@ -813,9 +1148,15 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 6,
-          height: 6,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              center: const Alignment(-.4, -.4),
+              colors: [Color.lerp(color, Colors.white, .55)!, color],
+            ),
+          ),
         ),
         const SizedBox(width: 4),
         Text(label, style: TextStyle(color: _white(.5), fontSize: 10.5)),
@@ -833,20 +1174,20 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     final out = <({IconData icon, String text, Color color})>[];
     if (!hasSessions) return out;
 
-    final goalH = _dailySleepGoalSeconds ~/ 3600;
+    final goalH = _goalLabel(_dailySleepGoalSeconds);
     final diff = _dailySleepGoalSeconds - sleepSeconds;
     if (diff <= 0) {
       out.add((
         icon: Icons.check_circle_rounded,
         text: diff == 0
             ? "Goal met"
-            : "Goal met · ${_formatDuration(-diff)} over ${goalH}h",
+            : "Goal met · ${_formatDuration(-diff)} over $goalH",
         color: _green,
       ));
     } else {
       out.add((
         icon: Icons.flag_rounded,
-        text: "${_formatDuration(diff)} below your ${goalH}h goal",
+        text: "${_formatDuration(diff)} below your $goalH goal",
         color: _amber,
       ));
     }
@@ -957,17 +1298,14 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
   }
 
   Widget _smallRoundButton(IconData icon, VoidCallback onTap) {
-    return Material(
-      color: _white(.06),
-      shape: const CircleBorder(),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onTap,
-        child: SizedBox(
-          width: 32,
-          height: 32,
-          child: Icon(icon, color: _white(.85), size: 20),
-        ),
+    return _Press3D(
+      onTap: onTap,
+      travel: 2,
+      child: Container(
+        width: 32,
+        height: 32,
+        decoration: _key3D(_violet, shape: BoxShape.circle),
+        child: Icon(icon, color: _white(.9), size: 20),
       ),
     );
   }
@@ -979,33 +1317,57 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     final isSelected = DateUtils.isSameDay(day, selectedDate);
     final isToday = DateUtils.isSameDay(day, DateTime.now());
 
+    final tint = hasRecord ? (metGoal ? _green : _amber) : _violet;
+
+    // Selected = glossy key popped up; logged = raised tile;
+    // empty = pressed into the card.
+    final BoxDecoration deco;
+    if (isSelected) {
+      deco = BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: _sleepGradient,
+        border: Border.all(color: Colors.white.withValues(alpha: .3)),
+      );
+    } else if (hasRecord) {
+      deco = BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.lerp(tint, Colors.white, .1)!.withValues(alpha: .22),
+            tint.withValues(alpha: .06),
+          ],
+        ),
+        border: Border.all(
+          color: isToday
+              ? _cyan.withValues(alpha: .7)
+              : Colors.white.withValues(alpha: .12),
+          width: isToday ? 1.4 : 1,
+        ),
+      );
+    } else {
+      deco = _tray3D(radius: 18).copyWith(
+        border: Border.all(
+          color: isToday
+              ? _cyan.withValues(alpha: .7)
+              : Colors.white.withValues(alpha: .07),
+          width: isToday ? 1.4 : 1,
+        ),
+      );
+    }
+
     return GestureDetector(
-      onTap: () => _goToDate(day),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        _goToDate(day);
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 260),
         curve: Curves.easeOutCubic,
         height: 74,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          gradient: isSelected ? _sleepGradient : null,
-          color: isSelected ? null : _white(.035),
-          border: Border.all(
-            color: isSelected
-                ? Colors.transparent
-                : isToday
-                ? _cyan.withValues(alpha: .55)
-                : _white(.06),
-          ),
-          boxShadow: isSelected
-              ? [
-                  BoxShadow(
-                    color: _violet.withValues(alpha: .55),
-                    blurRadius: 18,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : const [],
-        ),
+        transform: Matrix4.translationValues(0, isSelected ? -3 : 0, 0),
+        decoration: deco,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -1127,28 +1489,10 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
         ? (now.hour * 3600 + now.minute * 60 + now.second) / 86400.0
         : null;
 
-    return Container(
+    return _slab3D(
+      tint: _violet,
+      radius: 32,
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(32),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            _violet.withValues(alpha: .42),
-            const Color(0xFF2A1F7A).withValues(alpha: .35),
-            _cyan.withValues(alpha: .10),
-          ],
-        ),
-        border: Border.all(color: _white(.12)),
-        boxShadow: [
-          BoxShadow(
-            color: _violet.withValues(alpha: .25),
-            blurRadius: 40,
-            offset: const Offset(0, 18),
-          ),
-        ],
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1179,7 +1523,7 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              "of ${_dailySleepGoalSeconds ~/ 3600}h goal",
+                              "of ${_goalLabel(_dailySleepGoalSeconds)} goal",
                               style: TextStyle(
                                 color: _white(.55),
                                 fontSize: 11,
@@ -1199,18 +1543,21 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                   children: [
                     _heroStat(
                       Icons.bedtime_rounded,
+                      _violet,
                       "$sessions",
                       sessions == 1 ? "Session" : "Sessions",
                     ),
                     const SizedBox(height: 12),
                     _heroStat(
                       Icons.emoji_events_rounded,
+                      _amber,
                       longest <= 0 ? "-" : _formatDuration(longest),
                       "Longest sleep",
                     ),
                     const SizedBox(height: 12),
                     _heroStat(
                       Icons.device_thermostat_rounded,
+                      _pink,
                       avgPillow == null
                           ? "-"
                           : "${avgPillow.toStringAsFixed(1)}°C",
@@ -1225,11 +1572,8 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
             const SizedBox(height: 16),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: .16),
-                borderRadius: BorderRadius.circular(14),
-              ),
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+              decoration: _tray3D(),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1277,17 +1621,15 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     );
   }
 
-  Widget _heroStat(IconData icon, String value, String label) {
+  Widget _heroStat(IconData icon, Color color, String value, String label) {
     return Row(
       children: [
+        // Glossy 3D icon key
         Container(
           width: 36,
           height: 36,
-          decoration: BoxDecoration(
-            color: _white(.08),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: _cyan, size: 18),
+          decoration: _iconKey3D(color),
+          child: Icon(icon, color: Colors.white, size: 18),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -1316,11 +1658,12 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     return Row(
       children: [
         Container(
-          width: 10,
-          height: 6,
+          width: 14,
+          height: 8,
           decoration: BoxDecoration(
             gradient: gradient,
-            borderRadius: BorderRadius.circular(3),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Colors.white.withValues(alpha: .35)),
           ),
         ),
         const SizedBox(width: 5),
@@ -1348,8 +1691,18 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                     height: 14,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: _white(.07),
                         borderRadius: BorderRadius.circular(7),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: .45),
+                            Colors.white.withValues(alpha: .05),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: .07),
+                        ),
                       ),
                     ),
                   ),
@@ -1366,18 +1719,27 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                       top: 5,
                       height: 14,
                       width: math.max(w * (s.end - s.start), 6),
+                      // Glossy 3D capsule (no shadow).
                       child: Container(
                         decoration: BoxDecoration(
                           gradient: s.isTimer ? _timerGradient : _sleepGradient,
                           borderRadius: BorderRadius.circular(7),
-                          boxShadow: [
-                            BoxShadow(
-                              color: (s.isTimer ? _amber : _cyan).withValues(
-                                alpha: .55,
-                              ),
-                              blurRadius: 10,
-                            ),
-                          ],
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .35),
+                          ),
+                        ),
+                        foregroundDecoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(7),
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.white.withValues(alpha: .45),
+                              Colors.white.withValues(alpha: 0),
+                              Colors.black.withValues(alpha: .18),
+                            ],
+                            stops: const [0, .5, 1],
+                          ),
                         ),
                       ),
                     ),
@@ -1404,9 +1766,6 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(1),
-                          boxShadow: const [
-                            BoxShadow(color: Colors.white, blurRadius: 6),
-                          ],
                         ),
                       ),
                     ),
@@ -1436,12 +1795,8 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
         Text(title, style: _display(20)),
         const SizedBox(width: 10),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-          decoration: BoxDecoration(
-            color: _white(.08),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: _white(.08)),
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: _key3D(_violet, radius: 10),
           child: Text(
             "$count",
             style: TextStyle(
@@ -1473,25 +1828,23 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     String subtitle,
     Gradient accent,
   ) {
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 14),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: _slab3D(
+      tint: _violet,
+      radius: 26,
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
-      decoration: _glass(radius: 26, strength: .7),
+      child: SizedBox(
+      width: double.infinity,
       child: Column(
         children: [
           Container(
             width: 60,
             height: 60,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
+            decoration: _iconKey3D(
+              accent.colors.first,
               gradient: accent,
-              boxShadow: [
-                BoxShadow(
-                  color: accent.colors.first.withValues(alpha: .45),
-                  blurRadius: 24,
-                ),
-              ],
+              radius: 30,
             ),
             child: Icon(icon, color: Colors.white, size: 26),
           ),
@@ -1504,6 +1857,8 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
             style: TextStyle(color: _white(.5), fontSize: 12.5),
           ),
         ],
+      ),
+      ),
       ),
     );
   }
@@ -1521,6 +1876,8 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
     required DateTime? endTime,
     required Gradient accent,
     List<_Stat> stats = const [],
+    String? note,
+    Widget? extra,
   }) {
     final timeRange = startTime == null && endTime == null
         ? "No time recorded"
@@ -1555,28 +1912,25 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
         ),
       ),
       onDismissed: (_) => deleteWithUndo(doc.id, data),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: _slab3D(
+        tint: _violet,
+        radius: 26,
         padding: const EdgeInsets.all(16),
-        decoration: _glass(radius: 26),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
+                // Glossy 3D icon key
                 Container(
                   width: 46,
                   height: 46,
-                  decoration: BoxDecoration(
+                  decoration: _iconKey3D(
+                    accent.colors.first,
                     gradient: accent,
-                    borderRadius: BorderRadius.circular(15),
-                    boxShadow: [
-                      BoxShadow(
-                        color: accent.colors.first.withValues(alpha: .45),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
+                    radius: 15,
                   ),
                   child: Icon(icon, color: Colors.white, size: 22),
                 ),
@@ -1615,33 +1969,60 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
                           ),
                         ],
                       ),
+                      if (note != null) ...[
+                        const SizedBox(height: 3),
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.hourglass_bottom_rounded,
+                              size: 13,
+                              color: _cyan,
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                note,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: _cyan.withValues(alpha: .85),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                ShaderMask(
-                  blendMode: BlendMode.srcIn,
-                  shaderCallback: (rect) => accent.createShader(rect),
-                  child: Text(
-                    durationText,
-                    style: _display(24, weight: FontWeight.w700),
-                  ),
+                Text(
+                  durationText,
+                  style: _display(24, weight: FontWeight.w700),
                 ),
               ],
             ),
             if (stats.isNotEmpty) ...[
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  for (int i = 0; i < stats.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 8),
-                    Expanded(child: _statTile(stats[i], accent)),
+              // Equal-height tiles so "Pillow" lines up with the others.
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (int i = 0; i < stats.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(child: _statTile(stats[i], accent)),
+                    ],
                   ],
-                ],
+                ),
               ),
             ],
+            if (extra != null) ...[const SizedBox(height: 12), extra],
           ],
         ),
+      ),
       ),
     );
   }
@@ -1649,10 +2030,18 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
   Widget _statTile(_Stat stat, Gradient accent) {
     return Container(
       padding: const EdgeInsets.all(12),
+      // Raised inner panel (glossy top, bright rim, no shadow).
       decoration: BoxDecoration(
-        color: _white(.045),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _white(.05)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.lerp(_violet, Colors.white, .12)!.withValues(alpha: .22),
+            _violet.withValues(alpha: .06),
+          ],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: .13)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1715,11 +2104,29 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
         ? "-"
         : "${(pillowTemperature as num).toStringAsFixed(1)}°C";
 
+    if (data["manual"] == true) {
+      return _recordCard(
+        doc: doc,
+        data: data,
+        icon: Icons.edit_calendar_rounded,
+        title: "Added by hand",
+        durationText: _formatDuration(_sessionSeconds(data)),
+        startTime: startTime,
+        endTime: endTime,
+        accent: _sleepGradient,
+      );
+    }
+
     return _recordCard(
       doc: doc,
       data: data,
       icon: Icons.bedtime_rounded,
       title: "Sleep Session",
+      extra: _tempChart(data, startTime),
+      note: switch (_fallAsleepSeconds(data)) {
+        final s? => "Fell asleep in ${s < 60 ? "${s}s" : "${s ~/ 60}m"}",
+        null => null,
+      },
       durationText: _formatDuration(_sessionSeconds(data)),
       startTime: startTime,
       endTime: endTime,
@@ -1739,6 +2146,103 @@ class _SleepSessionScreenState extends State<SleepSessionScreen>
         ),
         _Stat(Icons.device_thermostat_rounded, "Pillow", pillowTemperatureText),
       ],
+    );
+  }
+
+  /// Pillow temperature through the session (needs 2+ samples).
+  Widget? _tempChart(Map<String, dynamic> data, DateTime? start) {
+    final raw = data["temp_samples"];
+    if (raw is! List) return null;
+    final pts = <(double, double)>[];
+    for (final e in raw) {
+      if (e is Map && e["t"] is num && e["c"] is num) {
+        pts.add(((e["t"] as num).toDouble(), (e["c"] as num).toDouble()));
+      }
+    }
+    if (pts.length < 2) return null;
+    pts.sort((a, b) => a.$1.compareTo(b.$1));
+
+    final temps = pts.map((p) => p.$2);
+    final lo = temps.reduce(math.min);
+    final hi = temps.reduce(math.max);
+    final first = pts.first.$2;
+    final last = pts.last.$2;
+    final change = last - first;
+    String clockAt(double secs) => start == null
+        ? ""
+        : DateFormat('h:mm a').format(
+            start.add(Duration(seconds: secs.round())),
+          );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: _tray3D(radius: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.device_thermostat_rounded, size: 14, color: _amber),
+              const SizedBox(width: 6),
+              Text(
+                "Pillow temperature",
+                style: TextStyle(
+                  color: _white(.7),
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                "${lo.toStringAsFixed(1)}–${hi.toStringAsFixed(1)}°C",
+                style: TextStyle(color: _white(.55), fontSize: 11),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                change.abs() < .05
+                    ? "steady"
+                    : "${change > 0 ? '▲' : '▼'} ${change.abs().toStringAsFixed(1)}°",
+                style: TextStyle(
+                  color: change > .05
+                      ? _amber
+                      : change < -.05
+                      ? _cyan
+                      : _white(.55),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 56,
+            width: double.infinity,
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0, end: 1),
+              duration: const Duration(milliseconds: 900),
+              curve: Curves.easeOutCubic,
+              builder: (context, v, _) => CustomPaint(
+                painter: _TempLinePainter(pts, reveal: v),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Text(
+                clockAt(pts.first.$1),
+                style: TextStyle(color: _white(.4), fontSize: 10),
+              ),
+              const Spacer(),
+              Text(
+                clockAt(pts.last.$1),
+                style: TextStyle(color: _white(.4), fontSize: 10),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1973,30 +2477,49 @@ class _LevelBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: SizedBox(
-        height: 5,
-        width: double.infinity,
-        child: Stack(
-          children: [
-            Positioned.fill(child: ColoredBox(color: _white(.08))),
-            TweenAnimationBuilder<double>(
-              tween: Tween(begin: 0, end: level),
-              duration: const Duration(milliseconds: 900),
-              curve: Curves.easeOutCubic,
-              builder: (context, v, _) => FractionallySizedBox(
-                widthFactor: v,
-                heightFactor: 1,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: gradient,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
+    // Recessed 3D track with a glossy fill.
+    return Container(
+      height: 8,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(4),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: .45),
+            Colors.white.withValues(alpha: .05),
+          ],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: .06)),
+      ),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: level),
+          duration: const Duration(milliseconds: 900),
+          curve: Curves.easeOutCubic,
+          builder: (context, v, _) => FractionallySizedBox(
+            widthFactor: v,
+            heightFactor: 1,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: gradient,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              foregroundDecoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withValues(alpha: .45),
+                    Colors.white.withValues(alpha: 0),
+                  ],
                 ),
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -2014,13 +2537,29 @@ class _RingPainter extends CustomPainter {
     final radius = (size.shortestSide - stroke) / 2;
     final rect = Rect.fromCircle(center: center, radius: radius);
 
+    // Recessed groove: dark track with a light lower lip.
     canvas.drawCircle(
       center,
       radius,
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
-        ..color = _white(.08),
+        ..color = Colors.black.withValues(alpha: .35),
+    );
+    canvas.drawCircle(
+      center,
+      radius + stroke / 2 - .6,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: .3),
+            Colors.white.withValues(alpha: .14),
+          ],
+        ).createShader(rect.inflate(stroke)),
     );
 
     if (progress <= 0) return;
@@ -2030,20 +2569,6 @@ class _RingPainter extends CustomPainter {
       colors: [_violet, _cyan, _magenta, _violet],
       transform: GradientRotation(-math.pi / 2),
     ).createShader(rect);
-
-    // Glow
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      sweep,
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.round
-        ..shader = shader
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-    );
 
     // Arc
     canvas.drawArc(
@@ -2056,6 +2581,19 @@ class _RingPainter extends CustomPainter {
         ..strokeWidth = stroke
         ..strokeCap = StrokeCap.round
         ..shader = shader,
+    );
+
+    // Glossy highlight along the outer side of the tube.
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius + stroke * .22),
+      -math.pi / 2,
+      sweep,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.2
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.white.withValues(alpha: .4),
     );
   }
 
@@ -2682,6 +3220,722 @@ class _CalendarOverlayState extends State<CalendarOverlay> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// =====================================================================
+// ADD A MISSED NIGHT — bottom sheet
+// =====================================================================
+/// Lets the user pick when they went to bed and woke up. Pops with
+/// `(bedtime, wakeTime)` when saved.
+class _AddNightSheet extends StatefulWidget {
+  final DateTime day; // the day selected on the Sleep Log
+  const _AddNightSheet({required this.day});
+
+  @override
+  State<_AddNightSheet> createState() => _AddNightSheetState();
+}
+
+class _AddNightSheetState extends State<_AddNightSheet> {
+  /// 0 = went to bed on the selected day, 1 = the evening before.
+  int _bedDay = 0;
+  TimeOfDay _bed = const TimeOfDay(hour: 22, minute: 30);
+  TimeOfDay _wake = const TimeOfDay(hour: 6, minute: 30);
+
+  @override
+  void initState() {
+    super.initState();
+    // Logging today? The night most likely started yesterday evening.
+    if (DateUtils.isSameDay(widget.day, DateTime.now())) _bedDay = 1;
+  }
+
+  DateTime get _bedDate {
+    final d = widget.day.subtract(Duration(days: _bedDay));
+    return DateTime(d.year, d.month, d.day, _bed.hour, _bed.minute);
+  }
+
+  /// Wake is the first time after bedtime with the chosen clock time.
+  DateTime get _wakeDate {
+    final b = _bedDate;
+    var w = DateTime(b.year, b.month, b.day, _wake.hour, _wake.minute);
+    if (!w.isAfter(b)) w = w.add(const Duration(days: 1));
+    return w;
+  }
+
+  int get _seconds => _wakeDate.difference(_bedDate).inSeconds;
+
+  String? get _problem {
+    if (_wakeDate.isAfter(DateTime.now())) {
+      return "Wake-up time is in the future";
+    }
+    if (_seconds < 15 * 60) return "A night needs at least 15 minutes";
+    if (_seconds > 16 * 3600) return "That's over 16 hours — check the times";
+    return null;
+  }
+
+  Future<void> _pick(bool bed) async {
+    final picked = await showDialog<TimeOfDay>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: .6),
+      builder: (_) => _TimeWheelDialog(
+        initial: bed ? _bed : _wake,
+        title: bed ? "Went to bed at" : "Woke up at",
+        icon: bed ? Icons.bedtime_rounded : Icons.wb_sunny_rounded,
+        color: bed ? _violet : _amber,
+      ),
+    );
+    if (picked == null) return;
+    HapticFeedback.selectionClick();
+    setState(() {
+      if (bed) {
+        _bed = picked;
+      } else {
+        _wake = picked;
+      }
+    });
+  }
+
+  String _clock(TimeOfDay t) =>
+      DateFormat('h:mm a').format(DateTime(2000, 1, 1, t.hour, t.minute));
+
+  @override
+  Widget build(BuildContext context) {
+    final problem = _problem;
+    final prevDay = widget.day.subtract(const Duration(days: 1));
+
+    Widget dayChip(int value, String label) {
+      final on = _bedDay == value;
+      return Expanded(
+        child: _Press3D(
+          onTap: () => setState(() => _bedDay = value),
+          travel: 2,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            alignment: Alignment.center,
+            decoration: on
+                ? _iconKey3D(_violet, gradient: _sleepGradient, radius: 14)
+                : _key3D(Colors.white, radius: 14),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: on ? Colors.white : _white(.65),
+                fontSize: 12.5,
+                fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget timeTile(bool bed) {
+      final color = bed ? _violet : _amber;
+      return Expanded(
+        child: _Press3D(
+          onTap: () => _pick(bed),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: _key3D(color, radius: 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 26,
+                      height: 26,
+                      decoration: _iconKey3D(color, radius: 9),
+                      child: Icon(
+                        bed ? Icons.bedtime_rounded : Icons.wb_sunny_rounded,
+                        color: Colors.white,
+                        size: 15,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      bed ? "Bedtime" : "Woke up",
+                      style: TextStyle(color: _white(.6), fontSize: 12),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  _clock(bed ? _bed : _wake),
+                  style: _display(22, weight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  DateFormat('EEE, MMM d').format(bed ? _bedDate : _wakeDate),
+                  style: TextStyle(color: _white(.45), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        20 + MediaQuery.of(context).padding.bottom,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color.lerp(_surface, Colors.white, .06)!, _bg],
+        ),
+        border: Border(top: BorderSide(color: _white(.14))),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: _white(.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            "ADD A MISSED NIGHT",
+            style: _eyebrow(color: _cyan.withValues(alpha: .85)),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            "When did you sleep?",
+            style: _display(24, weight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            "It counts toward your goal, streaks and averages.",
+            style: TextStyle(color: _white(.55), fontSize: 12.5),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            "Went to bed on",
+            style: TextStyle(color: _white(.6), fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              dayChip(1, DateFormat('EEE, MMM d').format(prevDay)),
+              const SizedBox(width: 8),
+              dayChip(0, DateFormat('EEE, MMM d').format(widget.day)),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              timeTile(true),
+              const SizedBox(width: 10),
+              timeTile(false),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Live result
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: _tray3D(),
+            child: Row(
+              children: [
+                Icon(
+                  problem == null
+                      ? Icons.nights_stay_rounded
+                      : Icons.error_outline_rounded,
+                  color: problem == null ? _cyan : _amber,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    problem ?? "${_formatDuration(_seconds)} of sleep",
+                    style: TextStyle(
+                      color: problem == null ? Colors.white : _amber,
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 200),
+            opacity: problem == null ? 1 : .4,
+            child: _Press3D(
+              onTap: () {
+                if (problem != null) return;
+                Navigator.pop(context, (_bedDate, _wakeDate));
+              },
+              child: Container(
+                height: 52,
+                alignment: Alignment.center,
+                decoration: _iconKey3D(
+                  _violet,
+                  gradient: _sleepGradient,
+                  radius: 18,
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_rounded, color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      "Save night",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small line chart of pillow temperature over a session: glossy amber
+/// line with a soft fill and end dots (no shadows / glows).
+class _TempLinePainter extends CustomPainter {
+  final List<(double, double)> pts; // (seconds, °C)
+  final double reveal; // 0..1 draw-in animation
+  _TempLinePainter(this.pts, {this.reveal = 1});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t0 = pts.first.$1, t1 = pts.last.$1;
+    var lo = pts.map((p) => p.$2).reduce(math.min);
+    var hi = pts.map((p) => p.$2).reduce(math.max);
+    // Keep at least a 2 °C window so tiny wobbles don't look dramatic.
+    if (hi - lo < 2) {
+      final mid = (hi + lo) / 2;
+      lo = mid - 1;
+      hi = mid + 1;
+    }
+    const pad = 5.0;
+    Offset at((double, double) p) => Offset(
+      t1 == t0 ? 0 : (p.$1 - t0) / (t1 - t0) * size.width,
+      pad + (1 - (p.$2 - lo) / (hi - lo)) * (size.height - pad * 2),
+    );
+
+    // Faint guide lines
+    final guide = Paint()
+      ..color = Colors.white.withValues(alpha: .07)
+      ..strokeWidth = 1;
+    for (final f in [.25, .5, .75]) {
+      canvas.drawLine(
+        Offset(0, size.height * f),
+        Offset(size.width, size.height * f),
+        guide,
+      );
+    }
+
+    final line = Path()..moveTo(at(pts.first).dx, at(pts.first).dy);
+    for (int i = 1; i < pts.length; i++) {
+      final a = at(pts[i - 1]), b = at(pts[i]);
+      final mx = (a.dx + b.dx) / 2;
+      line.cubicTo(mx, a.dy, mx, b.dy, b.dx, b.dy);
+    }
+
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, size.width * reveal, size.height));
+
+    // Soft fill under the line
+    final fill = Path.from(line)
+      ..lineTo(at(pts.last).dx, size.height)
+      ..lineTo(at(pts.first).dx, size.height)
+      ..close();
+    canvas.drawPath(
+      fill,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            _amber.withValues(alpha: .28),
+            _amber.withValues(alpha: 0),
+          ],
+        ).createShader(Offset.zero & size),
+    );
+
+    // Glossy line: darker base stroke + bright top stroke
+    canvas.drawPath(
+      line,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.2
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = const Color(0xFFE08A1E),
+    );
+    canvas.drawPath(
+      line.shift(const Offset(0, -.6)),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..color = const Color(0xFFFFD79A),
+    );
+    canvas.restore();
+
+    // End dots (start = hollow, latest = filled)
+    final s0 = at(pts.first);
+    canvas.drawCircle(s0, 3.2, Paint()..color = const Color(0xFF1A1440));
+    canvas.drawCircle(
+      s0,
+      3.2,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = _amber,
+    );
+    if (reveal >= .99) {
+      final e = at(pts.last);
+      canvas.drawCircle(e, 4, Paint()..color = _amber);
+      canvas.drawCircle(e, 1.6, Paint()..color = Colors.white);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_TempLinePainter old) =>
+      old.reveal != reveal || old.pts != pts;
+}
+
+// =====================================================================
+// 3D TIME WHEEL PICKER (replaces the stock Material clock)
+// =====================================================================
+/// Hour / minute / AM-PM wheels sitting in a recessed 3D well, with a
+/// glossy selection band. Pops with the chosen [TimeOfDay].
+class _TimeWheelDialog extends StatefulWidget {
+  final TimeOfDay initial;
+  final String title;
+  final IconData icon;
+  final Color color;
+  const _TimeWheelDialog({
+    required this.initial,
+    required this.title,
+    required this.icon,
+    required this.color,
+  });
+
+  @override
+  State<_TimeWheelDialog> createState() => _TimeWheelDialogState();
+}
+
+class _TimeWheelDialogState extends State<_TimeWheelDialog> {
+  static const double _item = 46;
+
+  late int _hour12 = widget.initial.hourOfPeriod == 0
+      ? 12
+      : widget.initial.hourOfPeriod; // 1..12
+  late int _minute = widget.initial.minute; // 0..59
+  late bool _pm = widget.initial.period == DayPeriod.pm;
+
+  // Large starting offsets so the hour / minute wheels can spin both ways.
+  late final _hourCtrl = FixedExtentScrollController(
+    initialItem: 12 * 50 + (_hour12 - 1),
+  );
+  late final _minCtrl = FixedExtentScrollController(
+    initialItem: 60 * 50 + _minute,
+  );
+  late final _ampmCtrl = FixedExtentScrollController(initialItem: _pm ? 1 : 0);
+
+  @override
+  void dispose() {
+    _hourCtrl.dispose();
+    _minCtrl.dispose();
+    _ampmCtrl.dispose();
+    super.dispose();
+  }
+
+  TimeOfDay get _value =>
+      TimeOfDay(hour: (_hour12 % 12) + (_pm ? 12 : 0), minute: _minute);
+
+  Widget _wheel({
+    required FixedExtentScrollController controller,
+    required int count,
+    required bool loop,
+    required String Function(int) label,
+    required bool Function(int) isSelected,
+    required ValueChanged<int> onChanged,
+    double width = 72,
+  }) {
+    return SizedBox(
+      width: width,
+      child: ListWheelScrollView.useDelegate(
+        controller: controller,
+        itemExtent: _item,
+        diameterRatio: 1.35,
+        perspective: .004,
+        physics: const FixedExtentScrollPhysics(),
+        onSelectedItemChanged: (i) {
+          HapticFeedback.selectionClick();
+          onChanged(i % count);
+        },
+        childDelegate: loop
+            ? ListWheelChildLoopingListDelegate(
+                children: [
+                  for (int i = 0; i < count; i++)
+                    _wheelText(label(i), isSelected(i)),
+                ],
+              )
+            : ListWheelChildListDelegate(
+                children: [
+                  for (int i = 0; i < count; i++)
+                    _wheelText(label(i), isSelected(i)),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _wheelText(String text, bool selected) {
+    return Center(
+      child: AnimatedDefaultTextStyle(
+        duration: const Duration(milliseconds: 150),
+        style: GoogleFonts.outfit(
+          fontSize: selected ? 30 : 22,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          color: selected ? Colors.white : _white(.35),
+        ),
+        child: Text(text),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.color;
+    final v = _value;
+    final preview = DateFormat(
+      'h:mm a',
+    ).format(DateTime(2000, 1, 1, v.hour, v.minute));
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+        // 3D slab, no shadows: lit top, darker base, bright rim.
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color.lerp(_surface, c, .22)!,
+              Color.lerp(_bg, c, .06)!,
+            ],
+          ),
+          border: Border.all(color: _white(.16)),
+        ),
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_white(.06), _white(0)],
+            stops: const [0, .35],
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // ---------- Header ----------
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: _iconKey3D(c, radius: 11),
+                  child: Icon(widget.icon, color: Colors.white, size: 18),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.title.toUpperCase(),
+                        style: _eyebrow(color: c.withValues(alpha: .9)),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        preview,
+                        style: _display(22, weight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // ---------- Wheels in a recessed well ----------
+            Container(
+              height: _item * 5,
+              decoration: _tray3D(radius: 20),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  // Glossy selection band behind the centre row
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    child: Container(
+                      height: _item,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Color.lerp(c, Colors.white, .15)!.withValues(
+                              alpha: .45,
+                            ),
+                            c.withValues(alpha: .18),
+                          ],
+                        ),
+                        border: Border.all(color: _white(.22)),
+                      ),
+                    ),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _wheel(
+                        controller: _hourCtrl,
+                        count: 12,
+                        loop: true,
+                        label: (i) => "${i + 1}",
+                        isSelected: (i) => i + 1 == _hour12,
+                        onChanged: (i) => setState(() => _hour12 = i + 1),
+                      ),
+                      Text(
+                        ":",
+                        style: _display(28, weight: FontWeight.w700),
+                      ),
+                      _wheel(
+                        controller: _minCtrl,
+                        count: 60,
+                        loop: true,
+                        label: (i) => i.toString().padLeft(2, '0'),
+                        isSelected: (i) => i == _minute,
+                        onChanged: (i) => setState(() => _minute = i),
+                      ),
+                      const SizedBox(width: 6),
+                      _wheel(
+                        controller: _ampmCtrl,
+                        count: 2,
+                        loop: false,
+                        width: 64,
+                        label: (i) => i == 0 ? "AM" : "PM",
+                        isSelected: (i) => (i == 1) == _pm,
+                        onChanged: (i) => setState(() => _pm = i == 1),
+                      ),
+                    ],
+                  ),
+                  // Fade the wheel edges into the well
+                  IgnorePointer(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            _bg.withValues(alpha: .85),
+                            _bg.withValues(alpha: 0),
+                            _bg.withValues(alpha: 0),
+                            _bg.withValues(alpha: .85),
+                          ],
+                          stops: const [0, .3, .7, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // ---------- Actions ----------
+            Row(
+              children: [
+                Expanded(
+                  child: _Press3D(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: _key3D(Colors.white, radius: 16),
+                      child: Text(
+                        "Cancel",
+                        style: TextStyle(
+                          color: _white(.8),
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  flex: 2,
+                  child: _Press3D(
+                    onTap: () => Navigator.pop(context, _value),
+                    child: Container(
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: _iconKey3D(c, radius: 16),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.check_rounded,
+                            color: Colors.white,
+                            size: 19,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            "Set time",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

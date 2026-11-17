@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:esp32_ble_app/retro_switch.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' show DateFormat;
 
@@ -145,8 +146,16 @@ class BedtimeReminder {
     await _schedule(settings.value);
   }
 
-  Future<void> save(BedtimeSettings s) async {
+  /// Updates the UI right away, then does the heavy work (permission
+  /// prompt, scheduling 14 notifications, Firestore). [settleDelay] lets a
+  /// toggle animation finish first so it stays perfectly smooth.
+  Future<void> save(
+    BedtimeSettings s, {
+    Duration settleDelay = Duration.zero,
+  }) async {
     settings.value = s;
+    if (settleDelay > Duration.zero) await Future.delayed(settleDelay);
+    if (settings.value != s) return; // toggled again meanwhile
     if (s.enabled) await AlarmService.instance.requestPermissions();
     await _schedule(s);
     try {
@@ -264,20 +273,36 @@ class BedtimeReminderCard extends StatelessWidget {
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 300),
             padding: const EdgeInsets.fromLTRB(16, 14, 10, 14),
+            // 3D slab, no shadows: lit top fading to a darker base + shine.
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(24),
               gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
                 colors: on
                     ? [
-                        _violet.withValues(alpha: 0.28),
-                        _violet.withValues(alpha: 0.28),
+                        Color.lerp(_violet, Colors.white, .08)!
+                            .withValues(alpha: 0.42),
+                        _violet.withValues(alpha: 0.12),
                       ]
-                    : [_white(0.06), _white(0.06)],
+                    : [_white(0.11), _white(0.03)],
               ),
               border: Border.all(
-                color: on ? _violet.withValues(alpha: 0.5) : _white(0.1),
+                color: on
+                    ? _violet.withValues(alpha: 0.55)
+                    : Colors.white.withValues(alpha: 0.13),
+              ),
+            ),
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withValues(alpha: .06),
+                  Colors.white.withValues(alpha: 0),
+                ],
+                stops: const [0, .5],
               ),
             ),
             child: Row(
@@ -285,21 +310,34 @@ class BedtimeReminderCard extends StatelessWidget {
                 Container(
                   width: 46,
                   height: 46,
+                  // Glossy 3D bead (no shadow).
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
                       colors: on
-                          ? [_violet, _violet]
-                          : [_white(0.12), _white(0.12)],
+                          ? [
+                              Color.lerp(_violet, Colors.white, .28)!,
+                              Color.lerp(_violet, Colors.black, .22)!,
+                            ]
+                          : [_white(0.2), _white(0.06)],
                     ),
-                    boxShadow: on
-                        ? [
-                            BoxShadow(
-                              color: _violet.withValues(alpha: 0.5),
-                              blurRadius: 16,
-                            ),
-                          ]
-                        : null,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: on ? .3 : .15),
+                    ),
+                  ),
+                  foregroundDecoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.white.withValues(alpha: .28),
+                        Colors.white.withValues(alpha: 0),
+                      ],
+                      stops: const [0, .5],
+                    ),
                   ),
                   child: Icon(
                     on
@@ -331,15 +369,13 @@ class BedtimeReminderCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Switch(
+                RetroSwitch(
                   value: on,
-                  activeThumbColor: Colors.white,
-                  activeTrackColor: _violet,
-                  inactiveThumbColor: _white(0.7),
-                  inactiveTrackColor: _white(0.12),
                   onChanged: (v) {
-                    HapticFeedback.selectionClick();
-                    BedtimeReminder.instance.save(s.copyWith(enabled: v));
+                    BedtimeReminder.instance.save(
+                      s.copyWith(enabled: v),
+                      settleDelay: const Duration(milliseconds: 320),
+                    );
                   },
                 ),
               ],

@@ -391,11 +391,6 @@ class _SoundScreenState extends State<SoundScreen>
   // ===================================================================
   Widget _soundCard(Map<String, dynamic> sound) {
     final colors = sound['colors'] as List<Color>;
-    final gradient = LinearGradient(
-      colors: colors,
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-    );
     final isSelected = selectedFile == sound['file'];
     final playingHere = isSelected && isPlaying;
 
@@ -409,38 +404,32 @@ class _SoundScreenState extends State<SoundScreen>
           duration: const Duration(milliseconds: 320),
           curve: Curves.easeOutCubic,
           padding: const EdgeInsets.all(16),
+          // 3D slab, no shadows: lit top fading to a darker base.
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(28),
             gradient: isSelected
                 ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
                     colors: [
-                      colors.first.withValues(alpha: .55),
-                      colors.last.withValues(alpha: .22),
+                      Color.lerp(colors.first, Colors.white, .1)!
+                          .withValues(alpha: .55),
+                      colors.last.withValues(alpha: .14),
                     ],
                   )
                 : LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [_white(.08), _white(.025)],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [_white(.11), _white(.02)],
                   ),
             border: Border.all(
               color: isSelected
                   ? colors.last.withValues(alpha: .8)
-                  : _white(.08),
+                  : _white(.13),
               width: isSelected ? 1.5 : 1,
             ),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: colors.first.withValues(alpha: .45),
-                      blurRadius: 28,
-                      offset: const Offset(0, 12),
-                    ),
-                  ]
-                : const [],
           ),
+          foregroundDecoration: _shine(radius: 28, a: .06),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -450,17 +439,8 @@ class _SoundScreenState extends State<SoundScreen>
                   Container(
                     width: 50,
                     height: 50,
-                    decoration: BoxDecoration(
-                      gradient: gradient,
-                      borderRadius: BorderRadius.circular(17),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colors.first.withValues(alpha: .5),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
+                    decoration: _gloss(colors, radius: 17),
+                    foregroundDecoration: _shine(radius: 17),
                     child: Icon(sound['icon'], color: Colors.white, size: 25),
                   ),
                   const Spacer(),
@@ -476,9 +456,18 @@ class _SoundScreenState extends State<SoundScreen>
                             key: ValueKey(isSelected ? "paused" : "idle"),
                             width: 30,
                             height: 30,
+                            // Small raised round key
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
-                              color: _white(isSelected ? .2 : .08),
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  _white(isSelected ? .32 : .16),
+                                  _white(isSelected ? .1 : .03),
+                                ],
+                              ),
+                              border: Border.all(color: _white(.16)),
                             ),
                             child: Icon(
                               Icons.play_arrow_rounded,
@@ -508,8 +497,13 @@ class _SoundScreenState extends State<SoundScreen>
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: _white(.16),
                         borderRadius: BorderRadius.circular(6),
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [_white(.28), _white(.08)],
+                        ),
+                        border: Border.all(color: _white(.2)),
                       ),
                       child: const Text(
                         "IN USE",
@@ -546,11 +540,6 @@ class _SoundScreenState extends State<SoundScreen>
   // ===================================================================
   Widget _nowPlaying(Map<String, dynamic> sound) {
     final colors = sound['colors'] as List<Color>;
-    final gradient = LinearGradient(
-      colors: colors,
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-    );
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(30),
@@ -560,8 +549,15 @@ class _SoundScreenState extends State<SoundScreen>
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(30),
-            color: _surface.withValues(alpha: .72),
-            border: Border.all(color: _white(.12)),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.lerp(_surface, Colors.white, .08)!.withValues(alpha: .82),
+                _surface.withValues(alpha: .7),
+              ],
+            ),
+            border: Border.all(color: _white(.16)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -587,16 +583,8 @@ class _SoundScreenState extends State<SoundScreen>
                     child: Container(
                       width: 54,
                       height: 54,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: gradient,
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.first.withValues(alpha: .55),
-                            blurRadius: 18,
-                          ),
-                        ],
-                      ),
+                      decoration: _gloss(colors, circle: true),
+                      foregroundDecoration: _shine(circle: true),
                       child: Icon(sound['icon'], color: Colors.white, size: 26),
                     ),
                   ),
@@ -632,16 +620,7 @@ class _SoundScreenState extends State<SoundScreen>
                     child: Container(
                       width: 52,
                       height: 52,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: colors.first.withValues(alpha: .5),
-                            blurRadius: 18,
-                          ),
-                        ],
-                      ),
+                      decoration: _pearl(colors.last),
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 180),
                         transitionBuilder: (c, a) =>
@@ -698,17 +677,7 @@ class _SoundScreenState extends State<SoundScreen>
                 child: Material(
                   color: Colors.transparent,
                   child: Ink(
-                    decoration: BoxDecoration(
-                      gradient: gradient,
-                      borderRadius: BorderRadius.circular(18),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colors.first.withValues(alpha: .45),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
+                    decoration: _gloss(colors, radius: 18),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(18),
                       onTap: () {
@@ -718,7 +687,9 @@ class _SoundScreenState extends State<SoundScreen>
                           'file': selectedFile,
                         });
                       },
-                      child: const Row(
+                      child: Container(
+                        foregroundDecoration: _shine(radius: 18, a: .22),
+                        child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
@@ -737,6 +708,7 @@ class _SoundScreenState extends State<SoundScreen>
                           ),
                         ],
                       ),
+                      ),
                     ),
                   ),
                 ),
@@ -751,14 +723,58 @@ class _SoundScreenState extends State<SoundScreen>
   // ===================================================================
   // HELPERS
   // ===================================================================
+  // Raised 3D glass (no shadow): lit top, darker base, bright rim.
   BoxDecoration _glass({double radius = 24}) => BoxDecoration(
     borderRadius: BorderRadius.circular(radius),
     gradient: LinearGradient(
-      begin: Alignment.topLeft,
-      end: Alignment.bottomRight,
-      colors: [_white(.085), _white(.025)],
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [_white(.13), _white(.03)],
     ),
-    border: Border.all(color: _white(.09)),
+    border: Border.all(color: _white(.14)),
+  );
+
+  /// Glossy key face from a colour pair: lit top, deeper base, bright rim.
+  BoxDecoration _gloss(List<Color> c, {double radius = 12, bool circle = false}) =>
+      BoxDecoration(
+        shape: circle ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: circle ? null : BorderRadius.circular(radius),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.lerp(c.first, Colors.white, .22)!,
+            Color.lerp(c.last, Colors.black, .18)!,
+          ],
+        ),
+        border: Border.all(color: Colors.white.withValues(alpha: .3)),
+      );
+
+  /// Top-half shine painted over a glossy face.
+  BoxDecoration _shine({double radius = 12, bool circle = false, double a = .28}) =>
+      BoxDecoration(
+        shape: circle ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: circle ? null : BorderRadius.circular(radius),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.white.withValues(alpha: a),
+            Colors.white.withValues(alpha: 0),
+          ],
+          stops: const [0, .5],
+        ),
+      );
+
+  /// Glossy white pearl (play buttons).
+  BoxDecoration _pearl(Color rim) => BoxDecoration(
+    shape: BoxShape.circle,
+    gradient: const LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [Colors.white, Color(0xFFCFCBE6)],
+    ),
+    border: Border.all(color: rim.withValues(alpha: .65), width: 1.5),
   );
 
   Widget _glassButton(IconData icon, VoidCallback onTap) {
@@ -766,6 +782,7 @@ class _SoundScreenState extends State<SoundScreen>
       color: Colors.transparent,
       child: Ink(
         decoration: _glass(radius: 16),
+        // (3D glass key, no shadow)
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(16),
